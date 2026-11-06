@@ -151,7 +151,7 @@ class BookCheefApi(context: Context) {
         return when {
             path.startsWith("storage/v1/") -> "$base/$path"
             path.startsWith("gallery/") -> "$base/storage/v1/object/public/$path"
-            else -> raw
+            else -> "$base/storage/v1/object/public/gallery/$path"
         }
     }
 
