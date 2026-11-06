@@ -133,8 +133,8 @@ private fun BookCheefApp() {
                                 Card(Modifier.fillMaxWidth()) {
                                     Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Column(Modifier.weight(1f).clickable {
+                                            readingText = ""
                                             selected = book
-                                            scope.launch { readingText = try { api.readBook(book.id) } catch (e: Exception) { "Ошибка: ${e.message}" } }
                                         }) {
                                             Text(book.title, style = MaterialTheme.typography.titleMedium)
                                             if (book.author.isNotBlank()) Text(book.author, style = MaterialTheme.typography.bodySmall)
