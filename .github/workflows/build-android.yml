@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,8 +28,20 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: gradle assembleDebug -PSUPABASE_URL="$SUPABASE_URL" -PSUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
-      - name: Upload APK
+      - name: Prepare APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk BookCheef.apk
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BookCheef-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: BookCheef-Android
+          path: BookCheef.apk
+          if-no-files-found: error
+      - name: Publish latest APK release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-latest
+          name: BookCheef Android — последняя версия
+          files: BookCheef.apk
+          overwrite_files: true
+          make_latest: true
+          generate_release_notes: false
