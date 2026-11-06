@@ -522,6 +522,17 @@ private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, on
 }
 
 @Composable
+private fun CoverPlaceholder(title: String) {
+    Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Plum, PanelLight))).padding(8.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+            Icon(Icons.Default.MenuBook, null, tint = Gold, modifier = Modifier.size(34.dp))
+            Spacer(Modifier.height(8.dp))
+            Text(title, color = Cream, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
 private fun ReaderScreen(
     book: BookItem,
     text: String,
