@@ -82,7 +82,14 @@ class BookCheefApi(context: Context) {
         if (userId.isBlank()) return@withContext JSONObject()
         val raw = request("/rest/v1/user_reading_history?select=reading_progress&user_id=eq.$userId&book_id=eq.$bookId")
         val rows = JSONArray(raw)
-        if (rows.length() == 0) JSONObject() else rows.optJSONObject(0)?.optJSONObject("reading_progress") ?: JSONObject()
+        if (rows.length() == 0) {
+            val now = java.time.Instant.now().toString()
+            val initial = JSONObject().put("user_id", userId).put("book_id", bookId)
+                .put("last_opened_at", now).put("completed", false).put("completed_at", JSONObject.NULL)
+                .put("reading_progress", JSONObject())
+            request("/rest/v1/user_reading_history?on_conflict=user_id,book_id", "POST", initial.toString(), true, "resolution=merge-duplicates,return=minimal")
+            JSONObject()
+        } else rows.optJSONObject(0)?.optJSONObject("reading_progress") ?: JSONObject()
     }
 
     suspend fun saveReadingProgress(bookId: String, progress: JSONObject) = withContext(Dispatchers.IO) {
@@ -90,11 +97,9 @@ class BookCheefApi(context: Context) {
         if (userId.isBlank()) return@withContext
         val now = java.time.Instant.now().toString()
         val payload = JSONObject()
-            .put("user_id", userId)
-            .put("book_id", bookId)
             .put("last_opened_at", now)
             .put("reading_progress", progress.put("updatedAt", now))
-        request("/rest/v1/user_reading_history?on_conflict=user_id,book_id", "POST", payload.toString(), true, "resolution=merge-duplicates,return=minimal")
+        request("/rest/v1/user_reading_history?user_id=eq.$userId&book_id=eq.$bookId", "PATCH", payload.toString())
     }
 
     suspend fun readBook(id: String): String = withContext(Dispatchers.IO) {
