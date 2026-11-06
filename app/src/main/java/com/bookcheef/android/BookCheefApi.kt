@@ -102,15 +102,21 @@ class BookCheefApi(context: Context) {
         request("/rest/v1/user_reading_history?user_id=eq.$userId&book_id=eq.$bookId", "PATCH", payload.toString())
     }
 
-    suspend fun readBook(id: String): String = withContext(Dispatchers.IO) {
+    suspend fun readBook(id: String, isFree: Boolean): String = withContext(Dispatchers.IO) {
         val file = File(downloads, "$id.json")
-        if (file.exists()) pretty(file.readText()) else {
+        if (isFree && file.exists()) {
+            pretty(file.readText())
+        } else {
+            // Never trust a local paid-book cache: ask Supabase to re-check the subscription on every open.
+            if (!isFree) file.delete()
             val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
+            if (isFree) file.writeText(result)
             pretty(result)
         }
     }
 
-    suspend fun downloadBook(id: String) = withContext(Dispatchers.IO) {
+    suspend fun downloadBook(id: String, isFree: Boolean) = withContext(Dispatchers.IO) {
+        require(isFree) { "Офлайн-загрузка доступна только для бесплатных книг." }
         val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
         File(downloads, "$id.json").writeText(result)
     }
