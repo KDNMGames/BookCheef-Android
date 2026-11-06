@@ -184,7 +184,10 @@ private fun BookCheefApp() {
             loadingReader = true
             error = ""
             try {
-                readingText = api.readBook(book.id, book.isFree)
+                val result = api.readBook(book.id, book.isFree)
+                readingText = result.text
+                readingFileUrl = result.externalUrl
+                readingFileName = result.fileName
                 // Progress sync is optional: an unapplied history migration must not block reading.
                 val progress = try { api.readingProgress(book.id) } catch (_: Exception) { JSONObject() }
                 withFrameNanosCompat()
