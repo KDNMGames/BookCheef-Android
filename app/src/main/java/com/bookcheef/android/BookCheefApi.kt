@@ -241,7 +241,7 @@ class BookCheefApi(context: Context) {
         }
     }
 
-    private suspend fun fetchBookText(id: String): String {
+    private suspend fun fetchBookResult(id: String): BookReadResult {
         val response = request(
             "/rest/v1/rpc/get_book_content",
             "POST",
@@ -250,60 +250,74 @@ class BookCheefApi(context: Context) {
         val book = try { JSONObject(response) } catch (_: Exception) {
             throw IllegalStateException("Сервер вернул некорректные данные книги.")
         }
-        val content = book.optString("book_content")
-        if (content.isNotBlank()) return content
-
+        var content = book.optString("book_content").takeUnless { it == "null" }.orEmpty()
         val interactive = book.optJSONObject("interactive_content")
-        if (interactive != null) {
-            val nodes = interactive.optJSONArray("nodes") ?: JSONArray()
-            return buildString {
-                for (i in 0 until nodes.length()) {
-                    val node = nodes.optJSONObject(i) ?: continue
-                    val heading = node.optString("title").ifBlank { node.optString("id") }
-                    if (heading.isNotBlank()) append(heading).append("\n\n")
-                    append(node.optString("text")).append("\n\n")
-                    val choices = node.optJSONArray("choices") ?: JSONArray()
-                    for (j in 0 until choices.length()) append("• ").append(choices.optJSONObject(j)?.optString("label").orEmpty()).append("\n")
-                    append("\n")
-                }
-            }.trim()
+        val questions = book.optJSONArray("reader_questions") ?: JSONArray()
+        if (content.isBlank() && interactive == null) {
+            val filePath = book.optString("book_file_path")
+            if (filePath.isBlank() || filePath == "null") {
+                throw IllegalStateException("У этой книги нет текста и не прикреплён файл. Проверьте книгу в панели администратора сайта.")
+            }
+            val encodedPath = filePath.split('/').joinToString("/") {
+                URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+            }
+            val bytes = requestBytes("/storage/v1/object/authenticated/book-files/$encodedPath")
+            val type = book.optString("book_file_type").lowercase().ifBlank {
+                book.optString("book_file_name").substringAfterLast('.', "").lowercase()
+            }
+            content = extractDocumentText(bytes, type)
+            if (content.isBlank()) throw IllegalStateException("Файл получен, но в нём не найден текст. Возможно, PDF является сканом без распознаваемого текста.")
         }
-
-        val filePath = book.optString("book_file_path")
-        if (filePath.isBlank() || filePath == "null") {
-            throw IllegalStateException("У этой книги нет текста и не прикреплён файл. Проверьте книгу в панели администратора сайта.")
-        }
-        val encodedPath = filePath.split('/').joinToString("/") {
-            URLEncoder.encode(it, "UTF-8").replace("+", "%20")
-        }
-        val bytes = requestBytes("/storage/v1/object/authenticated/book-files/$encodedPath")
-        val type = book.optString("book_file_type").lowercase().ifBlank {
-            book.optString("book_file_name").substringAfterLast('.', "").lowercase()
-        }
-        val text = extractDocumentText(bytes, type)
-        if (text.isBlank()) throw IllegalStateException("Файл получен, но в нём не найден текст. Возможно, PDF является сканом без распознаваемого текста.")
-        return text
+        return BookReadResult(
+            text = content,
+            interactiveContent = interactive,
+            readerQuestions = questions,
+            footnotes = interactive?.optJSONArray("footnotes") ?: JSONArray(),
+            footnoteStyle = interactive?.optJSONObject("footnote_style") ?: JSONObject()
+        )
     }
 
-    suspend fun readBook(id: String, isFree: Boolean): String = withContext(Dispatchers.IO) {
+    suspend fun readBook(id: String, isFree: Boolean): BookReadResult = withContext(Dispatchers.IO) {
         refreshIfNeeded()
         val file = File(downloads, "$id.json")
         if (isFree && file.exists()) {
-            val cached = pretty(file.readText())
-            if (cached.isNotBlank() && !cached.startsWith("{")) return@withContext cached
+            try {
+                val cached = JSONObject(file.readText())
+                val text = cached.optString("text")
+                if (text.isNotBlank() || cached.optJSONObject("interactiveContent") != null) {
+                    return@withContext BookReadResult(
+                        text = text,
+                        interactiveContent = cached.optJSONObject("interactiveContent"),
+                        readerQuestions = cached.optJSONArray("readerQuestions") ?: JSONArray(),
+                        footnotes = cached.optJSONArray("footnotes") ?: JSONArray(),
+                        footnoteStyle = cached.optJSONObject("footnoteStyle") ?: JSONObject()
+                    )
+                }
+            } catch (_: Exception) { file.delete() }
         }
-        // Paid books are never served from a local cache; the RPC checks entitlement each time.
         if (!isFree) file.delete()
-        val text = fetchBookText(id)
-        if (isFree) file.writeText(JSONObject().put("book_content", text).toString())
-        text
+        val result = fetchBookResult(id)
+        if (isFree) file.writeText(JSONObject()
+            .put("text", result.text)
+            .put("interactiveContent", result.interactiveContent ?: JSONObject.NULL)
+            .put("readerQuestions", result.readerQuestions)
+            .put("footnotes", result.footnotes)
+            .put("footnoteStyle", result.footnoteStyle)
+            .toString())
+        result
     }
 
     suspend fun downloadBook(id: String, isFree: Boolean) = withContext(Dispatchers.IO) {
         require(isFree) { "Офлайн-загрузка доступна только для бесплатных книг." }
         refreshIfNeeded()
-        val text = fetchBookText(id)
-        File(downloads, "$id.json").writeText(JSONObject().put("book_content", text).toString())
+        val result = fetchBookResult(id)
+        File(downloads, "$id.json").writeText(JSONObject()
+            .put("text", result.text)
+            .put("interactiveContent", result.interactiveContent ?: JSONObject.NULL)
+            .put("readerQuestions", result.readerQuestions)
+            .put("footnotes", result.footnotes)
+            .put("footnoteStyle", result.footnoteStyle)
+            .toString())
     }
 
     fun downloadedIds(): Set<String> =
@@ -333,7 +347,8 @@ data class BookItem(
 
 data class BookReadResult(
     val text: String = "",
-    val externalUrl: String? = null,
-    val fileName: String = "",
-    val fileType: String = ""
+    val interactiveContent: JSONObject? = null,
+    val readerQuestions: JSONArray = JSONArray(),
+    val footnotes: JSONArray = JSONArray(),
+    val footnoteStyle: JSONObject = JSONObject()
 )
