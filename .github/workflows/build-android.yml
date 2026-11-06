@@ -25,9 +25,15 @@ jobs:
           gradle-version: '8.9'
       - name: Build debug APK
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-        run: gradle assembleDebug -PSUPABASE_URL="$SUPABASE_URL" -PSUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
+          # Reuse the same Supabase secrets as the website; accept Android-specific names too.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL || secrets.VITE_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY || secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Supabase configuration is missing. Configure SUPABASE_URL and SUPABASE_ANON_KEY, or reuse VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY from the website."
+            exit 1
+          fi
+          gradle assembleDebug -PSUPABASE_URL="$SUPABASE_URL" -PSUPABASE_ANON_KEY="$SUPABASE_ANON_KEY"
       - name: Prepare APK
         run: cp app/build/outputs/apk/debug/app-debug.apk BookCheef.apk
       - name: Upload APK artifact
