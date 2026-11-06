@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -279,7 +280,7 @@ private fun BookCheefApp() {
                                 BookCatalogCard(
                                     book = book,
                                     downloaded = downloaded.contains(book.id),
-                                    onOpen = { selected = book; readingText = ""; readerScrollState.scrollTo(0) },
+                                    onOpen = { selected = book; readingText = ""; scope.launch { readerScrollState.scrollTo(0) } },
                                     onDownload = {
                                         scope.launch {
                                             try { api.downloadBook(book.id, book.isFree); downloaded = api.downloadedIds() }
