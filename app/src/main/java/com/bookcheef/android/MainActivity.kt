@@ -554,7 +554,20 @@ private fun ReaderScreen(
                 Text(book.title, color = GoldLight, fontSize = 25.sp, fontWeight = FontWeight.Bold, lineHeight = 31.sp)
                 if (book.author.isNotBlank()) Text(book.author, color = Muted, fontSize = 13.sp)
                 Spacer(Modifier.height(22.dp))
-                Text(text, color = Cream, fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp)
+                if (!externalUrl.isNullOrBlank()) {
+                    Card(colors = CardDefaults.cardColors(containerColor = PanelLight), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .4f))) {
+                        Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.MenuBook, null, tint = GoldLight, modifier = Modifier.size(38.dp))
+                            Spacer(Modifier.height(10.dp))
+                            Text(fileName.ifBlank { "Файл книги" }, color = Cream, fontWeight = FontWeight.SemiBold)
+                            Text("Документ защищён и будет открыт по временной ссылке.", color = Muted, fontSize = 11.sp)
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = { onOpenFile(externalUrl) }, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink)) { Text("Открыть книгу") }
+                        }
+                    }
+                } else {
+                    Text(text.ifBlank { "В этой книге пока нет текста." }, color = Cream, fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp)
+                }
                 Spacer(Modifier.height(70.dp))
             }
         }
