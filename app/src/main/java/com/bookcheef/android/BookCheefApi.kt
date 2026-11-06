@@ -323,6 +323,14 @@ class BookCheefApi(context: Context) {
     fun downloadedIds(): Set<String> =
         downloads.listFiles()?.filter { it.extension == "json" }?.map { it.nameWithoutExtension }?.toSet() ?: emptySet()
 
+    fun deleteDownloadedBook(id: String): Boolean {
+        val file = File(downloads, "$id.json")
+        return !file.exists() || file.delete()
+    }
+
+    fun downloadedSizeBytes(): Long =
+        downloads.listFiles()?.filter { it.isFile && it.extension == "json" }?.sumOf { it.length() } ?: 0L
+
     private fun pretty(raw: String): String = try {
         val obj = JSONObject(raw)
         obj.optString("book_content").ifBlank { obj.toString(2) }
