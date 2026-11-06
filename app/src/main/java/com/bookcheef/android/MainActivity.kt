@@ -98,7 +98,15 @@ private fun BookCheefApp() {
         }
     } else if (selected != null) {
         Column(Modifier.fillMaxSize().padding(16.dp)) {
-            TextButton(onClick = { selected = null; readingText = "" }) { Text("← Назад") }
+            TextButton(onClick = {
+                val bookId = selected!!.id
+                val position = readerScrollState.value
+                scope.launch {
+                    try { api.saveReadingProgress(bookId, JSONObject().put("scrollY", position)) } catch (_: Exception) { }
+                    selected = null
+                    readingText = ""
+                }
+            }) { Text("← Назад") }
             Text(selected!!.title, style = MaterialTheme.typography.headlineSmall)
             Spacer(Modifier.height(8.dp))
             if (readingText.isBlank()) {
