@@ -157,6 +157,32 @@ class BookCheefApi(context: Context) {
         }
     }
 
+    suspend fun catalogCollections(): List<BookCollection> = withContext(Dispatchers.IO) {
+        val raw = try {
+            request("/rest/v1/site_settings?select=data&id=eq.1", auth = false).also {
+                prefs.edit().putString("collections_cache", it).apply()
+            }
+        } catch (_: Exception) {
+            prefs.getString("collections_cache", null) ?: return@withContext emptyList()
+        }
+        val rows = try { JSONArray(raw) } catch (_: Exception) { JSONArray() }
+        val settings = rows.optJSONObject(0)?.optJSONObject("data") ?: JSONObject()
+        val items = settings.optJSONArray("catalog_collections") ?: JSONArray()
+        (0 until items.length()).mapNotNull { i ->
+            val item = items.optJSONObject(i) ?: return@mapNotNull null
+            val id = item.optString("id")
+            if (id.isBlank() || id == "null") return@mapNotNull null
+            val ids = item.optJSONArray("book_ids") ?: JSONArray()
+            BookCollection(
+                id = id,
+                name = item.optString("name").ifBlank { "Подборка" },
+                description = item.optString("description"),
+                coverUrl = publicImageUrl(item.optString("cover_url")),
+                bookIds = (0 until ids.length()).map { ids.optString(it) }.toSet()
+            )
+        }
+    }
+
     private fun publicImageUrl(value: String?): String? {
         val raw = value?.trim().orEmpty()
         if (raw.isBlank() || raw == "null") return null
@@ -353,6 +379,14 @@ class BookCheefApi(context: Context) {
         try { JSONArray(raw).toString(2) } catch (_: Exception) { raw }
     }
 }
+
+data class BookCollection(
+    val id: String,
+    val name: String,
+    val description: String,
+    val coverUrl: String?,
+    val bookIds: Set<String>
+)
 
 data class BookItem(
     val id: String,
