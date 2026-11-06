@@ -113,7 +113,7 @@ private fun BookCheefApp() {
                     Text(readingText, style = MaterialTheme.typography.bodyLarge.copy(fontSize = (16f * textScale).sp, lineHeight = (25f * textScale).sp))
                 }
             }
-            LaunchedEffect(selected!!.id) {
+            LaunchedEffect(selected!!.id, readingText) {
                 snapshotFlow { readerScrollState.value }
                     .drop(1)
                     .debounce(900)
