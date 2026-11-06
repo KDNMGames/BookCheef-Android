@@ -106,7 +106,7 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val api = remember { BookCheefApi(context) }
     val scope = rememberCoroutineScope()
-    var session by remember { mutableStateOf(api.hasSession()) }
+    var session by remember { mutableStateOf(api.hasSession() || api.hasCompletedLogin()) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var register by remember { mutableStateOf(false) }
@@ -348,17 +348,20 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
                                             Text("Истории, которые остаются с тобой", color = GoldLight, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                                             Text("Открой для себя новые миры среди страниц любимых книг.", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
                                             Spacer(Modifier.height(18.dp))
-                                            Text("Топ книг", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                                            Row(Modifier.fillMaxWidth().padding(top = 9.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                topBooks.forEachIndexed { index, book ->
-                                                    Card(Modifier.weight(1f).height(90.dp).clickable { readingData = BookReadResult(); selected = book }, colors = CardDefaults.cardColors(containerColor = Panel), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .25f))) {
-                                                        Column(Modifier.padding(7.dp), verticalArrangement = Arrangement.SpaceBetween) {
-                                                            Text("#${index + 1}", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                            Text(book.title, color = Cream, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                                            Text("★ ${book.likes} · ${book.dislikes}", color = Muted, fontSize = 9.sp)
-                                                        }
-                                                    }
-                                                }
+                                            val newestBooks = books.take(10)
+                                            val topPaidBooks = books.filter { !it.isFree }.sortedWith(compareByDescending<BookItem> { if (it.likes + it.dislikes > 0) it.likes.toDouble() / (it.likes + it.dislikes) else 0.0 }.thenByDescending { it.likes + it.dislikes }).take(10)
+                                            val topFreeBooks = books.filter { it.isFree }.sortedWith(compareByDescending<BookItem> { if (it.likes + it.dislikes > 0) it.likes.toDouble() / (it.likes + it.dislikes) else 0.0 }.thenByDescending { it.likes + it.dislikes }).take(10)
+                                            val interactiveBooks = books.filter { it.isInteractive }
+                                            BookRail("Новинки", newestBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            BookRail("Топ книг", topBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            BookRail("Топ платных книг", topPaidBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            BookRail("Топ бесплатных книг", topFreeBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            if (interactiveBooks.isNotEmpty()) BookRail("Интерактивные книги", interactiveBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            books.filter { it.series.isNotBlank() }.groupBy { it.series }.toSortedMap().forEach { (seriesName, seriesBooks) ->
+                                                BookRail("Серия: $seriesName", seriesBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            }
+                                            books.filter { it.genre.isNotBlank() }.groupBy { it.genre }.toSortedMap().forEach { (genreName, genreBooks) ->
+                                                BookRail("Жанр: $genreName", genreBooks) { book -> readingData = BookReadResult(); selected = book }
                                             }
                                             Spacer(Modifier.height(15.dp))
                                             Text("Категории и фильтры", color = GoldLight, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
@@ -518,6 +521,52 @@ private fun BookCheefHeader(title: String, onLogout: () -> Unit) {
         actions = { IconButton(onClick = onLogout) { Icon(Icons.Default.Logout, "Выйти", tint = Muted) } },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink, titleContentColor = Cream)
     )
+}
+
+@Composable
+private fun BookRail(title: String, books: List<BookItem>, onOpen: (BookItem) -> Unit) {
+    if (books.isEmpty()) return
+    Column(Modifier.fillMaxWidth().padding(top = 10.dp)) {
+        Text(title, color = GoldLight, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        androidx.compose.foundation.lazy.LazyRow(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(end = 4.dp)
+        ) {
+            items(books, key = { "rail-$title-${it.id}" }) { book ->
+                Card(
+                    modifier = Modifier.width(116.dp).clickable { onOpen(book) },
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = Panel),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .24f))
+                ) {
+                    Column {
+                        Box(Modifier.fillMaxWidth().height(148.dp).background(Brush.linearGradient(listOf(Plum, PanelLight)))) {
+                            SubcomposeAsyncImage(
+                                model = book.coverUrl,
+                                contentDescription = "Обложка: ${book.title}",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop,
+                                loading = { CoverPlaceholder(book.title) },
+                                error = { CoverPlaceholder(book.title) }
+                            )
+                            Text(
+                                if (book.isFree) "БЕСПЛАТНО" else "PRO",
+                                color = Cream,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(5.dp)).background(Plum.copy(alpha = .92f)).padding(horizontal = 6.dp, vertical = 3.dp)
+                            )
+                        }
+                        Column(Modifier.padding(8.dp)) {
+                            Text(book.title, color = Cream, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis, minLines = 2)
+                            if (book.likes + book.dislikes > 0) Text("👍 ${book.likes}  👎 ${book.dislikes}", color = Muted, fontSize = 9.sp, modifier = Modifier.padding(top = 4.dp))
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
