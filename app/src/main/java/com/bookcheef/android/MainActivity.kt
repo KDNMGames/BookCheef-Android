@@ -172,7 +172,7 @@ private fun BookCheefApp() {
         )
         LaunchedEffect(selected?.id) {
             val book = selected ?: return@LaunchedEffect
-            readingText = ""
+            readingData = BookReadResult()
             loadingReader = true
             error = ""
             try {
