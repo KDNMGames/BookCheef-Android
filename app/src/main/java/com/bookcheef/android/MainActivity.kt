@@ -4,6 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.MenuBook
@@ -50,48 +54,55 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private val Ink = Color(0xFF100E16)
-private val Panel = Color(0xFF1B1722)
-private val PanelLight = Color(0xFF26202D)
-private val Gold = Color(0xFFC6A36A)
-private val GoldLight = Color(0xFFF1D79E)
-private val Muted = Color(0xFFB7AD9F)
-private val Cream = Color(0xFFF4F0E8)
-private val Plum = Color(0xFF49365D)
+private data class BookPalette(val ink: Color, val panel: Color, val panelLight: Color, val gold: Color, val goldLight: Color, val muted: Color, val cream: Color, val plum: Color)
+private val DarkPalette = BookPalette(Color(0xFF100E16), Color(0xFF1B1722), Color(0xFF26202D), Color(0xFFC6A36A), Color(0xFFF1D79E), Color(0xFFB7AD9F), Color(0xFFF4F0E8), Color(0xFF49365D))
+private val LightPalette = BookPalette(Color(0xFFF7F4EE), Color(0xFFFFFFFF), Color(0xFFECE5D9), Color(0xFF98713A), Color(0xFF765324), Color(0xFF746D63), Color(0xFF29251F), Color(0xFFE8DCCB))
+private val LocalBookPalette = staticCompositionLocalOf { DarkPalette }
+private val Ink: Color @Composable get() = LocalBookPalette.current.ink
+private val Panel: Color @Composable get() = LocalBookPalette.current.panel
+private val PanelLight: Color @Composable get() = LocalBookPalette.current.panelLight
+private val Gold: Color @Composable get() = LocalBookPalette.current.gold
+private val GoldLight: Color @Composable get() = LocalBookPalette.current.goldLight
+private val Muted: Color @Composable get() = LocalBookPalette.current.muted
+private val Cream: Color @Composable get() = LocalBookPalette.current.cream
+private val Plum: Color @Composable get() = LocalBookPalette.current.plum
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.statusBarColor = android.graphics.Color.rgb(16, 14, 22)
         window.navigationBarColor = android.graphics.Color.rgb(16, 14, 22)
-        setContent { BookCheefTheme { BookCheefApp() } }
+        setContent {
+            val prefs = getSharedPreferences("bookcheef_preferences", MODE_PRIVATE)
+            var themeMode by remember { mutableStateOf(prefs.getString("theme_mode", "system") ?: "system") }
+            BookCheefTheme(themeMode) {
+                BookCheefApp(themeMode = themeMode, onThemeMode = {
+                    themeMode = it
+                    prefs.edit().putString("theme_mode", it).apply()
+                })
+            }
+        }
     }
 }
 
 @Composable
-private fun BookCheefTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = Gold,
-            onPrimary = Ink,
-            secondary = Plum,
-            background = Ink,
-            surface = Panel,
-            onSurface = Cream,
-            onBackground = Cream,
-            error = Color(0xFFFF8B91)
-        ),
-        typography = Typography(
+private fun BookCheefTheme(themeMode: String, content: @Composable () -> Unit) {
+    val systemDark = isSystemInDarkTheme()
+    val dark = when (themeMode) { "light" -> false; "dark" -> true; else -> systemDark }
+    val palette = if (dark) DarkPalette else LightPalette
+    val scheme = if (dark) darkColorScheme(primary = palette.gold, onPrimary = palette.ink, secondary = palette.plum, background = palette.ink, surface = palette.panel, onSurface = palette.cream, onBackground = palette.cream, error = Color(0xFFFF8B91))
+        else lightColorScheme(primary = palette.gold, onPrimary = Color.White, secondary = palette.plum, background = palette.ink, surface = palette.panel, onSurface = palette.cream, onBackground = palette.cream, error = Color(0xFFB3261E))
+    CompositionLocalProvider(LocalBookPalette provides palette) {
+        MaterialTheme(colorScheme = scheme, typography = Typography(
             headlineLarge = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
             titleLarge = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-        ),
-        content = content
-    )
+        ), content = content)
+    }
 }
 
 @OptIn(FlowPreview::class)
 @Composable
-private fun BookCheefApp() {
+private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val api = remember { BookCheefApi(context) }
     val scope = rememberCoroutineScope()
@@ -111,6 +122,10 @@ private fun BookCheefApp() {
     var search by remember { mutableStateOf("") }
     val preferences = remember { context.getSharedPreferences("bookcheef_preferences", android.content.Context.MODE_PRIVATE) }
     var textScale by remember { mutableFloatStateOf(preferences.getFloat("text_scale", 1.0f).coerceIn(0.85f, 1.8f)) }
+    var selectedGenre by remember { mutableStateOf("Все жанры") }
+    var selectedAge by remember { mutableStateOf("Любой возраст") }
+    var sortMode by remember { mutableStateOf("Рейтинг") }
+    var storageBytes by remember { mutableLongStateOf(api.downloadedSizeBytes()) }
 
     fun loadCatalog() {
         scope.launch {
@@ -242,15 +257,29 @@ private fun BookCheefApp() {
                 "account" -> AccountScreen(
                     email = api.currentEmail(),
                     textScale = textScale,
+                    themeMode = themeMode,
+                    onThemeMode = onThemeMode,
+                    downloadedCount = downloaded.size,
+                    storageBytes = storageBytes,
                     onTextScale = { textScale = it; preferences.edit().putFloat("text_scale", it).apply() },
                     onReset = { textScale = 1f; preferences.edit().putFloat("text_scale", 1f).apply() },
                     onLogout = { api.logout(); session = false }
                 )
                 else -> {
                     val shown = if (tab == "downloads") books.filter { downloaded.contains(it.id) } else books
-                    val filtered = shown.filter {
-                        search.isBlank() || listOf(it.title, it.author, it.description, it.genre, it.series).joinToString(" ").contains(search, ignoreCase = true)
+                    val filteredBase = shown.filter {
+                        (selectedGenre == "Все жанры" || it.genre == selectedGenre) &&
+                        (selectedAge == "Любой возраст" || it.age == selectedAge) &&
+                        (search.isBlank() || listOf(it.title, it.author, it.description, it.genre, it.series).joinToString(" ").contains(search, ignoreCase = true))
                     }
+                    val filtered = when (sortMode) {
+                        "Название" -> filteredBase.sortedBy { it.title.lowercase() }
+                        "Сначала бесплатные" -> filteredBase.sortedByDescending { it.isFree }
+                        else -> filteredBase
+                    }
+                    val topBooks = books.take(5)
+                    val genres = listOf("Все жанры") + books.map { it.genre }.filter { it.isNotBlank() }.distinct().sorted()
+                    val ages = listOf("Любой возраст") + books.map { it.age }.filter { it.isNotBlank() }.distinct().sorted()
                     Column(Modifier.fillMaxSize().padding(padding)) {
                         if (tab == "catalog") {
                             Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
@@ -319,12 +348,19 @@ private fun BookCheefApp() {
                                     BookCard(
                                         book = book,
                                         downloaded = downloaded.contains(book.id),
-                                        onOpen = { readingText = ""; selected = book },
+                                        onOpen = { readingData = BookReadResult(); selected = book },
+                                        onDelete = {
+                                            if (api.deleteDownloadedBook(book.id)) {
+                                                downloaded = api.downloadedIds()
+                                                storageBytes = api.downloadedSizeBytes()
+                                            }
+                                        },
                                         onDownload = {
                                             scope.launch {
                                                 try {
                                                     api.downloadBook(book.id, book.isFree)
                                                     downloaded = api.downloadedIds()
+                                                    storageBytes = api.downloadedSizeBytes()
                                                 } catch (e: Exception) {
                                                     error = e.message ?: "Не удалось сохранить книгу"
                                                 }
@@ -449,7 +485,7 @@ private fun BookCheefHeader(title: String, onLogout: () -> Unit) {
 }
 
 @Composable
-private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, onDownload: () -> Unit) {
+private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, onDownload: () -> Unit, onDelete: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         shape = RoundedCornerShape(18.dp),
@@ -496,8 +532,14 @@ private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, on
                     }
                     Spacer(Modifier.weight(1f))
                     if (book.isFree) {
-                        IconButton(onClick = onDownload, modifier = Modifier.size(34.dp)) {
-                            Icon(Icons.Default.Download, if (downloaded) "Сохранено" else "Скачать", tint = if (downloaded) GoldLight else Muted, modifier = Modifier.size(19.dp))
+                        if (downloaded) {
+                            IconButton(onClick = onDelete, modifier = Modifier.size(34.dp)) {
+                                Icon(Icons.Default.Delete, "Удалить скачанную книгу", tint = GoldLight, modifier = Modifier.size(19.dp))
+                            }
+                        } else {
+                            IconButton(onClick = onDownload, modifier = Modifier.size(34.dp)) {
+                                Icon(Icons.Default.Download, "Скачать", tint = Muted, modifier = Modifier.size(19.dp))
+                            }
                         }
                     }
                 }
@@ -649,6 +691,10 @@ private fun AccountScreen(
     textScale: Float,
     onTextScale: (Float) -> Unit,
     onReset: () -> Unit,
+    themeMode: String,
+    onThemeMode: (String) -> Unit,
+    downloadedCount: Int,
+    storageBytes: Long,
     onLogout: () -> Unit
 ) {
     Column(
@@ -672,12 +718,34 @@ private fun AccountScreen(
             Column(Modifier.padding(16.dp)) {
                 Text("Размер текста", color = Cream, fontWeight = FontWeight.Medium)
                 Text("${(textScale * 100).toInt()}%", color = GoldLight, fontSize = 13.sp)
+                Text("Пример того, как будет выглядеть текст книги:", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 8.dp))
+                Text("В маленьком лесу жил любознательный совёнок. Каждый вечер он открывал новую страницу и узнавал что-то интересное.", color = Cream, fontSize = (16f * textScale).sp, lineHeight = (24f * textScale).sp, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(PanelLight).padding(12.dp))
                 Slider(value = textScale, onValueChange = onTextScale, valueRange = .85f..1.8f, colors = SliderDefaults.colors(thumbColor = Gold, activeTrackColor = Gold))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Меньше", color = Muted, fontSize = 11.sp)
                     Text("Больше", color = Muted, fontSize = 11.sp)
                 }
                 TextButton(onClick = onReset) { Text("Сбросить размер", color = GoldLight) }
+            }
+        }
+        Text("Оформление", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Тема приложения", color = Cream, fontWeight = FontWeight.Medium)
+                listOf("system" to "Как на телефоне", "light" to "Светлая", "dark" to "Тёмная").forEach { (value, label) ->
+                    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp)).clickable { onThemeMode(value) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = themeMode == value, onClick = { onThemeMode(value) }, colors = RadioButtonDefaults.colors(selectedColor = Gold))
+                        Text(label, color = Cream, modifier = Modifier.padding(start = 8.dp))
+                    }
+                }
+            }
+        }
+        Text("Офлайн-библиотека", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Скачано книг: $downloadedCount", color = Cream, fontWeight = FontWeight.Medium)
+                Text("Занято: " + android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, storageBytes), color = Muted, fontSize = 12.sp)
+                Text("Удалять книги можно во вкладке «Офлайн» — нажмите на значок корзины.", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 5.dp))
             }
         }
         OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldLight), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .5f))) {
