@@ -41,7 +41,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
@@ -476,19 +475,10 @@ private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, on
                     model = book.coverUrl,
                     contentDescription = "Обложка: ${book.title}",
                     modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                ) {
-                    val state = painter.state
-                    if (state is coil.compose.AsyncImagePainter.State.Success) {
-                        SubcomposeAsyncImageContent()
-                    } else {
-                        Column(Modifier.fillMaxSize().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                            Icon(Icons.Default.MenuBook, null, tint = Gold, modifier = Modifier.size(35.dp))
-                            Spacer(Modifier.height(8.dp))
-                            Text(book.title, color = Cream, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                }
+                    contentScale = ContentScale.Crop,
+                    loading = { CoverPlaceholder(book.title) },
+                    error = { CoverPlaceholder(book.title) }
+                )
                 if (book.isInteractive) {
                     Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(5.dp)).background(Plum).padding(horizontal = 6.dp, vertical = 3.dp)) {
                         Text("ИНТЕРАКТИВ", color = Cream, fontSize = 7.sp, fontWeight = FontWeight.Bold)
