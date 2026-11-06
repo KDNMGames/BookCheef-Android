@@ -1,6 +1,7 @@
 package com.bookcheef.android
 
 import android.content.Context
+import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -9,18 +10,17 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipInputStream
 
 class BookCheefApi(context: Context) {
     private val prefs = context.getSharedPreferences("bookcheef_session", Context.MODE_PRIVATE)
     private val downloads = File(context.filesDir, "books").apply { mkdirs() }
     private val client = OkHttpClient.Builder()
-        .callTimeout(60, TimeUnit.SECONDS)
         .connectTimeout(20, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .callTimeout(60, TimeUnit.SECONDS)
         .build()
     private val base = BuildConfig.SUPABASE_URL.trimEnd('/')
     private val key = BuildConfig.SUPABASE_ANON_KEY
@@ -30,49 +30,55 @@ class BookCheefApi(context: Context) {
     fun currentEmail() = prefs.getString("email", "") ?: ""
     fun currentUserId() = prefs.getString("user_id", "") ?: ""
 
-    private fun accessToken(): String = prefs.getString("access", null) ?: key
-
     private fun request(path: String, method: String = "GET", body: String? = null, auth: Boolean = true, prefer: String? = null): String {
         check(base.startsWith("https://") && key.isNotBlank()) {
             "Не настроен Supabase. Проверьте SUPABASE_URL и SUPABASE_ANON_KEY в настройках сборки."
         }
+        val token = if (auth) prefs.getString("access", null)?.takeIf { it.isNotBlank() } ?: key else key
         val builder = Request.Builder().url("$base$path")
             .header("apikey", key)
-            .header("Authorization", "Bearer ${if (auth) accessToken() else key}")
+            .header("Authorization", "Bearer $token")
         if (!prefer.isNullOrBlank()) builder.header("Prefer", prefer)
         when (method) {
             "POST" -> builder.post((body ?: "{}").toRequestBody(jsonType))
             "PATCH" -> builder.patch((body ?: "{}").toRequestBody(jsonType))
-            "DELETE" -> builder.delete((body ?: "{}").toRequestBody(jsonType))
             else -> builder.get()
         }
         client.newCall(builder.build()).execute().use { response ->
-            val text = response.body?.string().orEmpty()
+            val responseText = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                val json = try { JSONObject(text) } catch (_: Exception) { JSONObject() }
-                val msg = json.optString("msg").ifBlank {
-                    json.optString("message").ifBlank { json.optString("error_description") }
-                }
-                throw IllegalStateException(msg.ifBlank { "Ошибка Supabase HTTP ${response.code}: ${text.take(240)}" })
+                val message = try {
+                    val json = JSONObject(responseText)
+                    listOf("message", "msg", "error_description", "error", "hint", "details")
+                        .map { json.optString(it) }.firstOrNull { it.isNotBlank() && it != "null" }
+                } catch (_: Exception) { null }
+                throw IllegalStateException(message ?: "Ошибка Supabase HTTP ${response.code}: ${responseText.take(240)}")
             }
-            return text
+            return responseText
         }
     }
 
-    private fun requestBytes(path: String): ByteArray {
-        check(base.startsWith("https://") && key.isNotBlank()) { "Не настроен Supabase." }
-        val builder = Request.Builder().url("$base$path")
-            .header("apikey", key)
-            .header("Authorization", "Bearer ${accessToken()}")
-        client.newCall(builder.build()).execute().use { response ->
-            if (!response.isSuccessful) {
-                val text = response.body?.string().orEmpty()
-                val json = try { JSONObject(text) } catch (_: Exception) { JSONObject() }
-                val msg = json.optString("message").ifBlank { json.optString("error").ifBlank { text } }
-                throw IllegalStateException("Не удалось загрузить файл книги (HTTP ${response.code}): ${msg.take(220)}")
-            }
-            return response.body?.bytes() ?: ByteArray(0)
-        }
+    private suspend fun refreshIfNeeded() = withContext(Dispatchers.IO) {
+        val access = prefs.getString("access", null) ?: return@withContext
+        val refresh = prefs.getString("refresh", null) ?: return@withContext
+        val expired = try {
+            val payload = access.split(".").getOrNull(1) ?: ""
+            val json = JSONObject(String(Base64.decode(payload, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING)))
+            json.optLong("exp", 0L) <= System.currentTimeMillis() / 1000L + 90L
+        } catch (_: Exception) { false }
+        if (!expired) return@withContext
+        val result = JSONObject(request(
+            "/auth/v1/token?grant_type=refresh_token",
+            "POST",
+            JSONObject().put("refresh_token", refresh).toString(),
+            false
+        ))
+        val newAccess = result.optString("access_token")
+        if (newAccess.isBlank()) throw IllegalStateException("Сессия истекла. Войдите в BookCheef заново.")
+        prefs.edit()
+            .putString("access", newAccess)
+            .putString("refresh", result.optString("refresh_token", refresh))
+            .apply()
     }
 
     suspend fun authenticate(email: String, password: String, register: Boolean) = withContext(Dispatchers.IO) {
@@ -91,8 +97,8 @@ class BookCheefApi(context: Context) {
         prefs.edit()
             .putString("access", access)
             .putString("refresh", result.optString("refresh_token"))
-            .putString("email", user?.optString("email")?.ifBlank { email } ?: email)
-            .putString("user_id", user?.optString("id")?.takeIf { it.isNotBlank() } ?: result.optString("id"))
+            .putString("email", user?.optString("email")?.takeIf { !it.isNullOrBlank() } ?: email)
+            .putString("user_id", user?.optString("id")?.takeIf { !it.isNullOrBlank() } ?: result.optString("id"))
             .apply()
     }
 
@@ -102,29 +108,50 @@ class BookCheefApi(context: Context) {
     }
 
     suspend fun catalog(): List<BookItem> = withContext(Dispatchers.IO) {
-        // book_catalog is the public metadata view: it exposes covers and descriptions without book text.
-        val raw = request("/rest/v1/book_catalog?select=id,title,description,cover_url,author,age,genre,series,is_free,is_interactive,created_at&order=created_at.desc")
-        val arr = JSONArray(raw)
-        (0 until arr.length()).mapNotNull { i ->
-            val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val id = o.optString("id")
-            if (id.isBlank() || id == "null") return@mapNotNull null
+        refreshIfNeeded()
+        // Use the same public catalog view as the website. Keep the request explicit so
+        // PostgREST only returns columns needed by the Android gallery.
+        val raw = request(
+            "/rest/v1/book_catalog?select=*&order=created_at.desc",
+            auth = true
+        )
+        val arr = try { JSONArray(raw) } catch (e: Exception) {
+            throw IllegalStateException("Supabase вернул каталог в неожиданном формате: ${raw.take(220)}", e)
+        }
+        (0 until arr.length()).mapNotNull { index ->
+            val row = arr.optJSONObject(index) ?: return@mapNotNull null
+            val id = row.optString("id").takeUnless { it.isBlank() || it == "null" } ?: return@mapNotNull null
+            val cover = row.optString("cover_url").takeUnless { it.isBlank() || it == "null" }
+                ?: row.optString("cover").takeUnless { it.isBlank() || it == "null" }
             BookItem(
                 id = id,
-                title = o.optString("title").ifBlank { "Без названия" },
-                description = o.optString("description"),
-                author = o.optString("author"),
-                isFree = o.optBoolean("is_free", false),
-                coverUrl = o.optString("cover_url").takeIf { it.startsWith("https://") || it.startsWith("http://") },
-                age = o.optString("age"),
-                genre = o.optString("genre"),
-                series = o.optString("series"),
-                isInteractive = o.optBoolean("is_interactive", false)
+                title = row.optString("title").ifBlank { "Без названия" },
+                description = row.optString("description"),
+                author = row.optString("author"),
+                isFree = row.optBoolean("is_free", false),
+                coverUrl = publicImageUrl(cover),
+                age = row.optString("age"),
+                genre = row.optString("genre"),
+                series = row.optString("series"),
+                isInteractive = row.optBoolean("is_interactive", false)
             )
         }
     }
 
+    private fun publicImageUrl(value: String?): String? {
+        val raw = value?.trim().orEmpty()
+        if (raw.isBlank() || raw == "null") return null
+        if (raw.startsWith("https://") || raw.startsWith("http://") || raw.startsWith("data:image/")) return raw
+        val path = raw.removePrefix("/")
+        return when {
+            path.startsWith("storage/v1/") -> "$base/$path"
+            path.startsWith("gallery/") -> "$base/storage/v1/object/public/$path"
+            else -> raw
+        }
+    }
+
     suspend fun readingProgress(bookId: String): JSONObject = withContext(Dispatchers.IO) {
+        refreshIfNeeded()
         val userId = currentUserId()
         if (userId.isBlank()) return@withContext JSONObject()
         val raw = request("/rest/v1/user_reading_history?select=reading_progress&user_id=eq.$userId&book_id=eq.$bookId")
@@ -140,6 +167,7 @@ class BookCheefApi(context: Context) {
     }
 
     suspend fun saveReadingProgress(bookId: String, progress: JSONObject) = withContext(Dispatchers.IO) {
+        refreshIfNeeded()
         val userId = currentUserId()
         if (userId.isBlank()) return@withContext
         val now = java.time.Instant.now().toString()
@@ -150,95 +178,58 @@ class BookCheefApi(context: Context) {
     }
 
     suspend fun readBook(id: String, isFree: Boolean): String = withContext(Dispatchers.IO) {
-        val cached = File(downloads, "$id.txt")
-        if (isFree && cached.exists()) return@withContext cached.readText()
-        // Always ask the protected RPC for the full row. It checks the Pro entitlement on the server.
-        if (!isFree) cached.delete()
-        val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
-        val row = try { JSONObject(result) } catch (_: Exception) {
-            throw IllegalStateException("Сервер вернул некорректные данные книги.")
-        }
-        val text = row.optString("book_content")
-        if (text.isNotBlank()) {
-            if (isFree) cached.writeText(text)
-            return@withContext text
-        }
+        refreshIfNeeded()
+        val file = File(downloads, "$id.json")
+        if (isFree && file.exists()) return@withContext pretty(file.readText())
 
-        val filePath = row.optString("book_file_path")
-        if (filePath.isBlank() || filePath == "null") {
-            throw IllegalStateException("У этой книги пока нет текста или загруженного файла.")
+        // Paid books are never served from a local cache; the RPC checks entitlement each time.
+        if (!isFree) file.delete()
+        val response = request(
+            "/rest/v1/rpc/get_book_content",
+            "POST",
+            JSONObject().put("target_book_id", id).toString()
+        )
+        val book = try { JSONObject(response) } catch (_: Exception) { null }
+        val content = book?.optString("book_content").orEmpty()
+        val result = when {
+            content.isNotBlank() -> content
+            book?.optJSONObject("interactive_content") != null -> {
+                val data = book.optJSONObject("interactive_content")!!
+                val nodes = data.optJSONArray("nodes") ?: JSONArray()
+                buildString {
+                    for (i in 0 until nodes.length()) {
+                        val node = nodes.optJSONObject(i) ?: continue
+                        val heading = node.optString("title").ifBlank { node.optString("id") }
+                        if (heading.isNotBlank()) append(heading).append("\n\n")
+                        append(node.optString("text")).append("\n\n")
+                        val choices = node.optJSONArray("choices") ?: JSONArray()
+                        for (j in 0 until choices.length()) append("• ").append(choices.optJSONObject(j)?.optString("label").orEmpty()).append("\n")
+                        append("\n")
+                    }
+                }.trim()
+            }
+            else -> "Для этой книги пока не добавлен текст. Попробуйте открыть её на сайте или обратитесь к автору."
         }
-        val encodedPath = filePath.split('/').joinToString("/") {
-            URLEncoder.encode(it, "UTF-8").replace("+", "%20")
-        }
-        val bytes = requestBytes("/storage/v1/object/authenticated/book-files/$encodedPath")
-        val fileType = row.optString("book_file_type").lowercase()
-        val documentText = when (fileType) {
-            "txt", "md", "markdown", "html", "htm", "rtf" -> bytes.toString(Charsets.UTF_8).let { decodeDocumentText(it, fileType) }
-            "docx" -> extractDocxText(bytes)
-            "pdf" -> throw IllegalStateException("Книга загружена в PDF. Для чтения PDF внутри приложения нужен отдельный просмотрщик; файл успешно найден, но этот формат пока не отображается как обычный текст.")
-            else -> throw IllegalStateException("Формат .$fileType пока не поддерживается встроенным текстовым просмотрщиком.")
-        }
-        if (documentText.isBlank()) throw IllegalStateException("Файл книги загружен, но в нём не найден читаемый текст.")
-        if (isFree) cached.writeText(documentText)
-        documentText
+        if (isFree) file.writeText(JSONObject().put("book_content", result).toString())
+        result
     }
 
     suspend fun downloadBook(id: String, isFree: Boolean) = withContext(Dispatchers.IO) {
         require(isFree) { "Офлайн-загрузка доступна только для бесплатных книг." }
+        refreshIfNeeded()
         val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
-        val row = JSONObject(result)
-        val text = row.optString("book_content")
-        val content = if (text.isNotBlank()) text else {
-            val path = row.optString("book_file_path")
-            require(path.isNotBlank() && path != "null") { "У книги нет текста или файла." }
-            val encodedPath = path.split('/').joinToString("/") { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
-            val bytes = requestBytes("/storage/v1/object/authenticated/book-files/$encodedPath")
-            when (row.optString("book_file_type").lowercase()) {
-                "txt", "md", "markdown", "html", "htm", "rtf" -> decodeDocumentText(bytes.toString(Charsets.UTF_8), row.optString("book_file_type").lowercase())
-                "docx" -> extractDocxText(bytes)
-                else -> throw IllegalStateException("Для офлайн-чтения пока поддерживаются TXT, Markdown, HTML, RTF и DOCX.")
-            }
-        }
-        File(downloads, "$id.txt").writeText(content)
+        val book = JSONObject(result)
+        File(downloads, "$id.json").writeText(book.toString())
     }
 
-    fun downloadedIds(): Set<String> = downloads.listFiles()?.filter { it.extension == "txt" }?.map { it.nameWithoutExtension }?.toSet() ?: emptySet()
+    fun downloadedIds(): Set<String> =
+        downloads.listFiles()?.filter { it.extension == "json" }?.map { it.nameWithoutExtension }?.toSet() ?: emptySet()
 
-    private fun decodeDocumentText(raw: String, type: String): String {
-        if (type == "html" || type == "htm") {
-            return raw.replace(Regex("(?is)<(script|style)[^>]*>.*?</\\1>"), "")
-                .replace(Regex("(?i)<br\\s*/?>|</p>|</div>|</h[1-6]>|</li>"), "\n")
-                .replace(Regex("<[^>]+>"), "")
-                .replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<")
-                .replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'")
-                .trim()
-        }
-        if (type == "rtf") return raw.replace(Regex("\\\\'[0-9a-fA-F]{2}"), " ")
-            .replace(Regex("\\\\[a-zA-Z]+-?\\d* ?"), "")
-            .replace(Regex("[{}]"), "").trim()
-        return raw
-    }
-
-    private fun extractDocxText(bytes: ByteArray): String {
-        val xml = ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
-            var found = ""
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (entry.name == "word/document.xml") {
-                    found = zip.readBytes().toString(Charsets.UTF_8)
-                    break
-                }
-            }
-            found
-        }
-        if (xml.isBlank()) throw IllegalStateException("Не удалось прочитать текст DOCX-файла.")
-        return xml.replace(Regex("</w:p>"), "\n\n")
-            .replace(Regex("<w:tab[^>]*/>"), "\t")
-            .replace(Regex("<[^>]+>"), "")
-            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-            .replace("&quot;", "\"").replace("&apos;", "'")
-            .trim()
+    private fun pretty(raw: String): String = try {
+        val obj = JSONObject(raw)
+        obj.optString("book_content").ifBlank { obj.toString(2) }
+    } catch (_: Exception) {
+        try { JSONArray(raw).toString(2) } catch (_: Exception) { raw }
     }
 }
 
