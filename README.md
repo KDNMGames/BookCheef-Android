@@ -28,7 +28,7 @@ For GitHub Actions, add repository Actions secrets named `SUPABASE_URL` and `SUP
 
 Open the project in Android Studio (JDK 17, Android SDK 35), sync Gradle, then run the `app` configuration.
 
-The GitHub Actions workflow `.github/workflows/build-android.yml` uploads `BookCheef-debug` as a build artifact after each push to `main`.
+The GitHub Actions workflow `.github/workflows/build-android.yml` builds the APK after each push to `main`, uploads it as an artifact, and publishes/replaces the latest APK at the GitHub Release tag `android-latest`. The stable download URL used by the website is `https://github.com/KDNMGames/BookCheef-Android/releases/latest/download/BookCheef.apk`.
 
 ## Important
 
