@@ -3,8 +3,8 @@ package com.bookcheef.android
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,27 +12,26 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Book
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Logout
+import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -46,35 +45,46 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-private val Ink = Color(0xFF09090D)
-private val Panel = Color(0xFF17151D)
-private val PanelLight = Color(0xFF211D29)
+private val Ink = Color(0xFF100E16)
+private val Panel = Color(0xFF1B1722)
+private val PanelLight = Color(0xFF26202D)
 private val Gold = Color(0xFFC6A36A)
-private val GoldLight = Color(0xFFE7C17B)
-private val Muted = Color(0xFFB9B2A8)
+private val GoldLight = Color(0xFFF1D79E)
+private val Muted = Color(0xFFB7AD9F)
 private val Cream = Color(0xFFF4F0E8)
-
-private val BookCheefColors = darkColorScheme(
-    primary = Gold,
-    onPrimary = Color(0xFF17120B),
-    secondary = GoldLight,
-    background = Ink,
-    surface = Panel,
-    onSurface = Cream,
-    onBackground = Cream,
-    error = Color(0xFFFF9A9A)
-)
+private val Plum = Color(0xFF49365D)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.statusBarColor = android.graphics.Color.rgb(9, 9, 13)
-        window.navigationBarColor = android.graphics.Color.rgb(9, 9, 13)
-        setContent { MaterialTheme(colorScheme = BookCheefColors) { BookCheefApp() } }
+        window.statusBarColor = android.graphics.Color.rgb(16, 14, 22)
+        window.navigationBarColor = android.graphics.Color.rgb(16, 14, 22)
+        setContent { BookCheefTheme { BookCheefApp() } }
     }
 }
 
-@OptIn(FlowPreview::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun BookCheefTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = darkColorScheme(
+            primary = Gold,
+            onPrimary = Ink,
+            secondary = Plum,
+            background = Ink,
+            surface = Panel,
+            onSurface = Cream,
+            onBackground = Cream,
+            error = Color(0xFFFF8B91)
+        ),
+        typography = Typography(
+            headlineLarge = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold),
+            titleLarge = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+        ),
+        content = content
+    )
+}
+
+@OptIn(FlowPreview::class)
 @Composable
 private fun BookCheefApp() {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -85,14 +95,15 @@ private fun BookCheefApp() {
     var password by remember { mutableStateOf("") }
     var register by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
+    var loadingReader by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var books by remember { mutableStateOf<List<BookItem>>(emptyList()) }
     var selected by remember { mutableStateOf<BookItem?>(null) }
     var readingText by remember { mutableStateOf("") }
-    var readingLoading by remember { mutableStateOf(false) }
     val readerScrollState = rememberScrollState()
     var downloaded by remember { mutableStateOf(setOf<String>()) }
     var tab by remember { mutableStateOf("catalog") }
+    var search by remember { mutableStateOf("") }
     val preferences = remember { context.getSharedPreferences("bookcheef_preferences", android.content.Context.MODE_PRIVATE) }
     var textScale by remember { mutableFloatStateOf(preferences.getFloat("text_scale", 1.0f).coerceIn(0.85f, 1.8f)) }
 
@@ -105,9 +116,8 @@ private fun BookCheefApp() {
                 downloaded = api.downloadedIds()
             } catch (e: Exception) {
                 error = e.message ?: "Не удалось загрузить каталог"
-            } finally {
-                busy = false
             }
+            busy = false
         }
     }
 
@@ -120,6 +130,7 @@ private fun BookCheefApp() {
             password = password,
             onPassword = { password = it },
             register = register,
+            onToggleMode = { register = !register; error = "" },
             busy = busy,
             error = error,
             onSubmit = {
@@ -129,165 +140,192 @@ private fun BookCheefApp() {
                     try {
                         api.authenticate(email.trim(), password, register)
                         session = api.hasSession()
+                        if (!session && register) error = "Аккаунт создан. Подтвердите почту, затем войдите."
                     } catch (e: Exception) {
                         error = e.message ?: "Ошибка авторизации"
-                    } finally {
-                        busy = false
                     }
+                    busy = false
                 }
-            },
-            onToggle = { register = !register; error = "" }
+            }
         )
     } else if (selected != null) {
-        val book = selected!!
-        LaunchedEffect(book.id) {
+        ReaderScreen(
+            book = selected!!,
+            text = readingText,
+            loading = loadingReader,
+            scrollState = readerScrollState,
+            textScale = textScale,
+            onBack = {
+                val bookId = selected!!.id
+                scope.launch {
+                    try { api.saveReadingProgress(bookId, JSONObject().put("scrollY", readerScrollState.value)) } catch (_: Exception) {}
+                    selected = null
+                    readingText = ""
+                    loadingReader = false
+                }
+            }
+        )
+        LaunchedEffect(selected?.id) {
+            val book = selected ?: return@LaunchedEffect
             readingText = ""
-            readingLoading = true
+            loadingReader = true
+            error = ""
             try {
-                val content = api.readBook(book.id, book.isFree)
-                readingText = content
+                readingText = api.readBook(book.id, book.isFree)
                 val progress = api.readingProgress(book.id)
-                withFrameNanos { }
-                withFrameNanos { }
+                withFrameNanosCompat()
+                withFrameNanosCompat()
                 readerScrollState.scrollTo(progress.optInt("scrollY", 0).coerceAtLeast(0))
             } catch (e: Exception) {
                 readingText = "Не удалось открыть книгу.\n\n${e.message ?: "Проверьте подключение и доступ к книге."}"
             } finally {
-                readingLoading = false
+                loadingReader = false
             }
         }
-        LaunchedEffect(book.id, readingText) {
+        LaunchedEffect(selected?.id, readingText) {
             snapshotFlow { readerScrollState.value }
                 .drop(1)
                 .debounce(900)
                 .collect { position ->
-                    if (readingText.isNotBlank() && !readingLoading) {
-                        try { api.saveReadingProgress(book.id, JSONObject().put("scrollY", position)) }
-                        catch (_: Exception) { }
+                    val bookId = selected?.id ?: return@collect
+                    if (readingText.isNotBlank()) {
+                        try { api.saveReadingProgress(bookId, JSONObject().put("scrollY", position)) } catch (_: Exception) {}
                     }
                 }
-        }
-        Column(
-            Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PanelLight, Ink)))
-        ) {
-            Row(
-                Modifier.fillMaxWidth().background(Panel).padding(horizontal = 12.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = {
-                    scope.launch {
-                        try { api.saveReadingProgress(book.id, JSONObject().put("scrollY", readerScrollState.value)) } catch (_: Exception) {}
-                        selected = null
-                        readingText = ""
-                    }
-                }) { Icon(Icons.Default.ArrowBack, "Назад", tint = GoldLight) }
-                Column(Modifier.weight(1f)) {
-                    Text("BOOKCHEEF", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                    Text(book.title, color = Cream, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            if (readingLoading) {
-                LinearProgressIndicator(Modifier.fillMaxWidth(), color = Gold, trackColor = PanelLight)
-                Text("Открываем книгу…", color = Muted, modifier = Modifier.padding(20.dp))
-            } else {
-                Column(
-                    Modifier.fillMaxSize().verticalScroll(readerScrollState).padding(horizontal = 20.dp, vertical = 22.dp)
-                ) {
-                    Text(book.title, color = GoldLight, fontSize = 27.sp, lineHeight = 34.sp, fontFamily = FontFamily.Serif, fontWeight = FontWeight.SemiBold)
-                    if (book.author.isNotBlank()) Text(book.author, color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp, bottom = 22.dp))
-                    HorizontalDivider(color = Gold.copy(alpha = .35f))
-                    Spacer(Modifier.height(18.dp))
-                    Text(
-                        readingText,
-                        color = Cream,
-                        style = MaterialTheme.typography.bodyLarge.copy(fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp)
-                    )
-                }
-            }
         }
     } else {
         Scaffold(
             containerColor = Ink,
             topBar = {
-                TopAppBar(
-                    title = {
-                        Column {
-                            Text("BOOKCHEEF", color = Gold, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                            Text(if (tab == "account") "Личный кабинет" else if (tab == "downloads") "Мои загрузки" else "Книжная галерея",
-                                color = Cream, fontSize = 20.sp, fontFamily = FontFamily.Serif)
-                        }
+                BookCheefHeader(
+                    title = when (tab) {
+                        "account" -> "Личный кабинет"
+                        "downloads" -> "Моя библиотека"
+                        else -> "Книжная галерея"
                     },
-                    actions = {
-                        IconButton(onClick = { loadCatalog() }) { Icon(Icons.Default.Refresh, "Обновить", tint = GoldLight) }
-                        IconButton(onClick = { api.logout(); session = false }) { Icon(Icons.Default.Logout, "Выйти", tint = Muted) }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = Panel)
+                    onLogout = { api.logout(); session = false; selected = null }
                 )
             },
             bottomBar = {
                 NavigationBar(containerColor = Panel, contentColor = Cream) {
-                    NavigationBarItem(selected = tab == "catalog", onClick = { tab = "catalog" }, icon = { Icon(Icons.Default.Book, null) }, label = { Text("Книги") }, colors = navColors())
-                    NavigationBarItem(selected = tab == "downloads", onClick = { tab = "downloads" }, icon = { Icon(Icons.Default.Download, null) }, label = { Text("Офлайн") }, colors = navColors())
-                    NavigationBarItem(selected = tab == "account", onClick = { tab = "account" }, icon = { Icon(Icons.Default.Bookmark, null) }, label = { Text("Аккаунт") }, colors = navColors())
+                    NavigationBarItem(
+                        selected = tab == "catalog",
+                        onClick = { tab = "catalog" },
+                        icon = { Icon(Icons.Default.Book, null) },
+                        label = { Text("Каталог") },
+                        colors = NavigationBarItemDefaults.colors(selectedIconColor = GoldLight, selectedTextColor = GoldLight, indicatorColor = Plum, unselectedIconColor = Muted, unselectedTextColor = Muted)
+                    )
+                    NavigationBarItem(
+                        selected = tab == "downloads",
+                        onClick = { tab = "downloads" },
+                        icon = { Icon(Icons.Default.Download, null) },
+                        label = { Text("Офлайн") },
+                        colors = NavigationBarItemDefaults.colors(selectedIconColor = GoldLight, selectedTextColor = GoldLight, indicatorColor = Plum, unselectedIconColor = Muted, unselectedTextColor = Muted)
+                    )
+                    NavigationBarItem(
+                        selected = tab == "account",
+                        onClick = { tab = "account" },
+                        icon = { Icon(Icons.Default.Person, null) },
+                        label = { Text("Аккаунт") },
+                        colors = NavigationBarItemDefaults.colors(selectedIconColor = GoldLight, selectedTextColor = GoldLight, indicatorColor = Plum, unselectedIconColor = Muted, unselectedTextColor = Muted)
+                    )
                 }
             }
         ) { padding ->
             when (tab) {
-                "account" -> Column(
-                    Modifier.padding(padding).fillMaxSize().background(Ink).padding(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text("Ваш аккаунт BookCheef", color = GoldLight, fontSize = 24.sp, fontFamily = FontFamily.Serif)
-                    Text("Вход выполнен: ${api.currentEmail().ifBlank { "аккаунт BookCheef" }}", color = Muted)
-                    Card(colors = CardDefaults.cardColors(containerColor = Panel), border = BorderStroke(1.dp, Gold.copy(alpha = .25f))) {
-                        Column(Modifier.fillMaxWidth().padding(18.dp)) {
-                            Text("Размер текста", color = Cream, fontWeight = FontWeight.SemiBold)
-                            Text("Настройте чтение: ${(textScale * 100).toInt()}%", color = Muted, fontSize = 12.sp)
-                            Slider(value = textScale, onValueChange = { textScale = it; preferences.edit().putFloat("text_scale", it).apply() }, valueRange = 0.85f..1.8f)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) { Text("Меньше", color = Muted, fontSize = 11.sp); Text("Больше", color = Muted, fontSize = 11.sp) }
-                            TextButton(onClick = { textScale = 1f; preferences.edit().putFloat("text_scale", 1f).apply() }) { Text("Сбросить размер", color = GoldLight) }
-                        }
-                    }
-                    Text("Избранное, история чтения и оценки синхронизируются с аккаунтом сайта в поддерживаемых разделах.", color = Muted, fontSize = 12.sp, lineHeight = 19.sp)
-                    OutlinedButton(onClick = { api.logout(); session = false }, border = BorderStroke(1.dp, Gold.copy(alpha = .55f)), colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldLight)) { Text("Выйти из аккаунта") }
-                }
+                "account" -> AccountScreen(
+                    email = api.currentEmail(),
+                    textScale = textScale,
+                    onTextScale = { textScale = it; preferences.edit().putFloat("text_scale", it).apply() },
+                    onReset = { textScale = 1f; preferences.edit().putFloat("text_scale", 1f).apply() },
+                    onLogout = { api.logout(); session = false }
+                )
                 else -> {
                     val shown = if (tab == "downloads") books.filter { downloaded.contains(it.id) } else books
-                    Column(Modifier.padding(padding).fillMaxSize().background(Ink)) {
+                    val filtered = shown.filter {
+                        search.isBlank() || listOf(it.title, it.author, it.description, it.genre, it.series).joinToString(" ").contains(search, ignoreCase = true)
+                    }
+                    Column(Modifier.fillMaxSize().padding(padding)) {
                         if (tab == "catalog") {
-                            Column(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(PanelLight, Panel))).padding(horizontal = 20.dp, vertical = 18.dp)) {
-                                Text("ВАША СЛЕДУЮЩАЯ ИСТОРИЯ", color = Gold, fontSize = 10.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
-                                Text("Откройте мир книг", color = Cream, fontSize = 26.sp, fontFamily = FontFamily.Serif, modifier = Modifier.padding(top = 7.dp))
-                                Text("Читайте любимые истории на любом устройстве.", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
+                            Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                                Text("Истории, которые остаются с тобой", color = GoldLight, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(5.dp))
+                                Text("Открой для себя новые миры среди страниц любимых книг.", color = Muted, fontSize = 13.sp)
+                                Spacer(Modifier.height(15.dp))
+                                OutlinedTextField(
+                                    value = search,
+                                    onValueChange = { search = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    placeholder = { Text("Найти книгу или автора…", color = Muted) },
+                                    leadingIcon = { Icon(Icons.Default.MenuBook, null, tint = Gold) },
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Gold,
+                                        unfocusedBorderColor = Gold.copy(alpha = .35f),
+                                        focusedTextColor = Cream,
+                                        unfocusedTextColor = Cream,
+                                        cursorColor = Gold
+                                    ),
+                                    shape = RoundedCornerShape(14.dp)
+                                )
                             }
                         }
                         if (error.isNotBlank()) {
-                            Card(Modifier.fillMaxWidth().padding(12.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF2B1B20)), border = BorderStroke(1.dp, Color(0xFF9D5555))) {
-                                Text(error, color = Color(0xFFFFB5B5), modifier = Modifier.padding(14.dp), fontSize = 12.sp)
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF3A2027)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF9E4B58))
+                            ) {
+                                Column(Modifier.padding(14.dp)) {
+                                    Text(error, color = Color(0xFFFFC3C7), fontSize = 13.sp)
+                                    TextButton(onClick = { loadCatalog() }) { Icon(Icons.Default.Refresh, null); Text("Повторить загрузку") }
+                                }
                             }
                         }
-                        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth(), color = Gold, trackColor = Panel)
-                        if (!busy && error.isBlank() && shown.isEmpty()) {
-                            Column(Modifier.fillMaxWidth().padding(30.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Default.AutoStories, null, tint = Gold, modifier = Modifier.size(44.dp))
-                                Text(if (tab == "downloads") "Пока нет офлайн-книг" else "Каталог пока пуст", color = Cream, fontSize = 19.sp, fontFamily = FontFamily.Serif, modifier = Modifier.padding(top = 12.dp))
-                                Text(if (tab == "downloads") "Сохраняйте бесплатные книги, чтобы читать без интернета." else "Потяните обновление или попробуйте позже.", color = Muted, fontSize = 12.sp)
-                                if (tab == "catalog") TextButton(onClick = { loadCatalog() }) { Text("Обновить каталог", color = GoldLight) }
-                            }
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(if (tab == "downloads") "Сохранённые книги" else "Все книги", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.weight(1f))
+                            Text("${filtered.size}", color = Muted, fontSize = 12.sp)
+                            IconButton(onClick = { loadCatalog() }) { Icon(Icons.Default.Refresh, "Обновить", tint = Gold) }
                         }
-                        LazyColumn(contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 12.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(shown, key = { it.id }) { book ->
-                                BookCatalogCard(
-                                    book = book,
-                                    downloaded = downloaded.contains(book.id),
-                                    onOpen = { selected = book; readingText = ""; scope.launch { readerScrollState.scrollTo(0) } },
-                                    onDownload = {
-                                        scope.launch {
-                                            try { api.downloadBook(book.id, book.isFree); downloaded = api.downloadedIds() }
-                                            catch (e: Exception) { error = e.message ?: "Не удалось сохранить книгу" }
+                        if (busy && books.isEmpty()) {
+                            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    CircularProgressIndicator(color = Gold)
+                                    Spacer(Modifier.height(12.dp))
+                                    Text("Загружаем библиотеку…", color = Muted)
+                                }
+                            }
+                        } else if (filtered.isEmpty()) {
+                            EmptyCatalog(
+                                title = if (tab == "downloads") "Здесь пока пусто" else "Книги пока не найдены",
+                                subtitle = if (tab == "downloads") "Сохраняйте бесплатные книги, чтобы читать их без интернета." else "Проверьте подключение и обновите каталог."
+                            )
+                        } else {
+                            LazyColumn(
+                                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(filtered, key = { it.id }) { book ->
+                                    BookCard(
+                                        book = book,
+                                        downloaded = downloaded.contains(book.id),
+                                        onOpen = { readingText = ""; selected = book },
+                                        onDownload = {
+                                            scope.launch {
+                                                try {
+                                                    api.downloadBook(book.id, book.isFree)
+                                                    downloaded = api.downloadedIds()
+                                                } catch (e: Exception) {
+                                                    error = e.message ?: "Не удалось сохранить книгу"
+                                                }
+                                            }
                                         }
-                                    }
-                                )
+                                    )
+                                }
                             }
                         }
                     }
@@ -296,15 +334,6 @@ private fun BookCheefApp() {
         }
     }
 }
-
-@Composable
-private fun navColors() = NavigationBarItemDefaults.colors(
-    selectedIconColor = GoldLight,
-    selectedTextColor = GoldLight,
-    indicatorColor = Gold.copy(alpha = .18f),
-    unselectedIconColor = Muted,
-    unselectedTextColor = Muted
-)
 
 @Composable
 private fun AuthScreen(
@@ -313,60 +342,70 @@ private fun AuthScreen(
     password: String,
     onPassword: (String) -> Unit,
     register: Boolean,
+    onToggleMode: () -> Unit,
     busy: Boolean,
     error: String,
-    onSubmit: () -> Unit,
-    onToggle: () -> Unit
+    onSubmit: () -> Unit
 ) {
-    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PanelLight, Ink, Ink)))) {
+    Box(
+        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF292033), Ink, Color(0xFF0C0B11)))),
+        contentAlignment = Alignment.Center
+    ) {
         Column(
-            Modifier.fillMaxWidth().align(Alignment.Center).padding(horizontal = 24.dp),
+            Modifier.fillMaxWidth().padding(horizontal = 24.dp).clip(RoundedCornerShape(26.dp))
+                .background(Panel).border(1.dp, Gold.copy(alpha = .48f), RoundedCornerShape(26.dp)).padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
-                Modifier.size(76.dp).clip(CircleShape).background(Gold.copy(alpha = .13f)),
+                Modifier.size(68.dp).clip(RoundedCornerShape(20.dp)).background(Gold.copy(alpha = .14f))
+                    .border(1.dp, Gold.copy(alpha = .5f), RoundedCornerShape(20.dp)),
                 contentAlignment = Alignment.Center
-            ) { Icon(Icons.Default.AutoStories, null, tint = GoldLight, modifier = Modifier.size(38.dp)) }
-            Text("BOOKCHEEF", color = GoldLight, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp, modifier = Modifier.padding(top = 17.dp))
-            Text("Истории, которые остаются", color = Cream, fontSize = 25.sp, fontFamily = FontFamily.Serif, modifier = Modifier.padding(top = 8.dp, bottom = 24.dp))
-            Card(
-                Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(18.dp),
-                colors = CardDefaults.cardColors(containerColor = Panel),
-                border = BorderStroke(1.dp, Gold.copy(alpha = .32f))
-            ) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(13.dp)) {
-                    Text(if (register) "Создать аккаунт" else "С возвращением", color = Cream, fontSize = 23.sp, fontFamily = FontFamily.Serif)
-                    Text(if (register) "Зарегистрируйтесь, чтобы читать и сохранять книги." else "Войдите, чтобы продолжить чтение и открыть свою библиотеку.", color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
-                    OutlinedTextField(
-                        value = email, onValueChange = onEmail, modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Электронная почта") }, singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                        colors = authFieldColors()
-                    )
-                    OutlinedTextField(
-                        value = password, onValueChange = onPassword, modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Пароль") }, singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        colors = authFieldColors()
-                    )
-                    if (error.isNotBlank()) Text(error, color = Color(0xFFFFA4A4), fontSize = 12.sp, lineHeight = 17.sp)
-                    Button(
-                        onClick = onSubmit, modifier = Modifier.fillMaxWidth().height(50.dp),
-                        enabled = !busy && email.isNotBlank() && password.length >= 6,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Color(0xFF17120B), disabledContainerColor = Gold.copy(alpha = .4f))
-                    ) {
-                        if (busy) CircularProgressIndicator(Modifier.size(19.dp), color = Color(0xFF17120B), strokeWidth = 2.dp)
-                        else Text(if (register) "Зарегистрироваться" else "Войти", fontWeight = FontWeight.Bold)
-                    }
-                    TextButton(onClick = onToggle, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Text(if (register) "Уже есть аккаунт? Войти" else "Нет аккаунта? Зарегистрироваться", color = GoldLight, fontSize = 12.sp)
-                    }
-                }
+            ) { Icon(Icons.Default.MenuBook, null, tint = GoldLight, modifier = Modifier.size(36.dp)) }
+            Spacer(Modifier.height(15.dp))
+            Text("BookCheef", color = GoldLight, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text("Книжная галерея", color = Muted, fontSize = 13.sp)
+            Spacer(Modifier.height(25.dp))
+            Text(if (register) "Создать аккаунт" else "С возвращением!", color = Cream, fontSize = 23.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (register) "Зарегистрируйтесь, чтобы открыть свою библиотеку" else "Войдите, чтобы продолжить чтение", color = Muted, fontSize = 12.sp)
+            Spacer(Modifier.height(22.dp))
+            OutlinedTextField(
+                value = email, onValueChange = onEmail, modifier = Modifier.fillMaxWidth(),
+                label = { Text("Электронная почта") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                colors = authFieldColors(), shape = RoundedCornerShape(13.dp)
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = password, onValueChange = onPassword, modifier = Modifier.fillMaxWidth(),
+                label = { Text("Пароль") }, singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                colors = authFieldColors(), shape = RoundedCornerShape(13.dp)
+            )
+            if (error.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(error, color = Color(0xFFFFA8AE), fontSize = 12.sp)
             }
-            Text("Используйте тот же аккаунт, что и на сайте BookCheef.", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 18.dp))
+            Spacer(Modifier.height(20.dp))
+            Button(
+                onClick = onSubmit,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                enabled = !busy && email.isNotBlank() && password.length >= 6,
+                shape = RoundedCornerShape(13.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink, disabledContainerColor = Gold.copy(alpha = .35f))
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), color = Ink, strokeWidth = 2.dp)
+                else Text(if (register) "ЗАРЕГИСТРИРОВАТЬСЯ" else "ВОЙТИ", fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            TextButton(onClick = onToggleMode) {
+                Text(if (register) "Уже есть аккаунт? Войти" else "Нет аккаунта? Зарегистрироваться", color = GoldLight, fontSize = 12.sp)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Lock, null, tint = Muted, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Один аккаунт для сайта и приложения", color = Muted, fontSize = 10.sp)
+            }
         }
     }
 }
@@ -374,29 +413,48 @@ private fun AuthScreen(
 @Composable
 private fun authFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = Gold,
-    unfocusedBorderColor = Color.White.copy(alpha = .18f),
+    unfocusedBorderColor = Gold.copy(alpha = .32f),
     focusedLabelColor = GoldLight,
     unfocusedLabelColor = Muted,
-    cursorColor = GoldLight,
     focusedTextColor = Cream,
-    unfocusedTextColor = Cream
+    unfocusedTextColor = Cream,
+    cursorColor = Gold
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BookCatalogCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, onDownload: () -> Unit) {
+private fun BookCheefHeader(title: String, onLogout: () -> Unit) {
+    TopAppBar(
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(11.dp)).background(Gold.copy(alpha = .15f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.MenuBook, null, tint = GoldLight)
+                }
+                Spacer(Modifier.width(11.dp))
+                Column {
+                    Text("BookCheef", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    Text(title, color = Muted, fontSize = 10.sp)
+                }
+            }
+        },
+        actions = { IconButton(onClick = onLogout) { Icon(Icons.Default.Logout, "Выйти", tint = Muted) } },
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = Ink, titleContentColor = Cream)
+    )
+}
+
+@Composable
+private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, onDownload: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = Panel),
-        border = BorderStroke(1.dp, Gold.copy(alpha = .22f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+        border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .27f))
     ) {
         Row(Modifier.padding(11.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(
-                Modifier.width(104.dp).height(148.dp).clip(RoundedCornerShape(7.dp)).background(PanelLight),
-                contentAlignment = Alignment.Center
+                Modifier.width(106.dp).height(148.dp).clip(RoundedCornerShape(10.dp))
+                    .background(Brush.linearGradient(listOf(Plum, PanelLight)))
             ) {
-                Icon(Icons.Default.AutoStories, null, tint = Gold.copy(alpha = .7f), modifier = Modifier.size(34.dp))
                 if (!book.coverUrl.isNullOrBlank()) {
                     AsyncImage(
                         model = book.coverUrl,
@@ -404,26 +462,145 @@ private fun BookCatalogCard(book: BookItem, downloaded: Boolean, onOpen: () -> U
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
+                } else {
+                    Column(Modifier.fillMaxSize().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Icon(Icons.Default.MenuBook, null, tint = Gold, modifier = Modifier.size(35.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Text(book.title, color = Cream, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                if (book.isInteractive) {
+                    Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(5.dp)).background(Plum).padding(horizontal = 6.dp, vertical = 3.dp)) {
+                        Text("ИНТЕРАКТИВ", color = Cream, fontSize = 7.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
-            Column(Modifier.weight(1f).padding(start = 14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text(book.title, color = Cream, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, lineHeight = 21.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (book.author.isNotBlank()) Text(book.author, color = GoldLight, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (book.description.isNotBlank()) Text(book.description, color = Muted, fontSize = 11.sp, lineHeight = 16.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                val meta = listOf(book.age, book.genre, book.series).filter { it.isNotBlank() }.joinToString(" · ")
-                if (meta.isNotBlank()) Text(meta, color = Muted.copy(alpha = .75f), fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(color = if (book.isFree) Color(0xFF24372E) else Color(0xFF3B2D1D), shape = RoundedCornerShape(30.dp)) {
-                        Text(if (book.isFree) "БЕСПЛАТНО" else "PRO", color = if (book.isFree) Color(0xFF9BD5B0) else GoldLight, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp))
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f)) {
+                Text(book.title, color = Cream, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (book.author.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(book.author, color = GoldLight, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(6.dp))
+                if (book.description.isNotBlank()) Text(book.description, color = Muted, fontSize = 11.sp, lineHeight = 15.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                val metadata = listOf(book.age, book.genre, book.series).filter { it.isNotBlank() }.joinToString(" · ")
+                if (metadata.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(metadata, color = Muted.copy(alpha = .8f), fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.clip(CircleShape).background(if (book.isFree) Color(0xFF254436) else Color(0xFF49371F)).padding(horizontal = 9.dp, vertical = 4.dp)) {
+                        Text(if (book.isFree) "БЕСПЛАТНО" else "PRO", color = if (book.isFree) Color(0xFFA9E2BF) else GoldLight, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.weight(1f))
                     if (book.isFree) {
                         IconButton(onClick = onDownload, modifier = Modifier.size(34.dp)) {
-                            Icon(if (downloaded) Icons.Default.Bookmark else Icons.Default.Download, if (downloaded) "Сохранено" else "Скачать офлайн", tint = GoldLight, modifier = Modifier.size(19.dp))
+                            Icon(Icons.Default.Download, if (downloaded) "Сохранено" else "Скачать", tint = if (downloaded) GoldLight else Muted, modifier = Modifier.size(19.dp))
                         }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ReaderScreen(
+    book: BookItem,
+    text: String,
+    loading: Boolean,
+    scrollState: androidx.compose.foundation.ScrollState,
+    textScale: Float,
+    onBack: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().background(Ink)) {
+        Row(
+            Modifier.fillMaxWidth().background(Panel).padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Назад", tint = GoldLight) }
+            Text(book.title, color = Cream, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, modifier = Modifier.weight(1f), overflow = TextOverflow.Ellipsis)
+        }
+        if (loading) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Gold)
+                    Spacer(Modifier.height(12.dp))
+                    Text("Открываем книгу…", color = Muted)
+                }
+            }
+        } else {
+            Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 22.dp, vertical = 22.dp)) {
+                Text(book.title, color = GoldLight, fontSize = 25.sp, fontWeight = FontWeight.Bold, lineHeight = 31.sp)
+                if (book.author.isNotBlank()) Text(book.author, color = Muted, fontSize = 13.sp)
+                Spacer(Modifier.height(22.dp))
+                Text(text, color = Cream, fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp)
+                Spacer(Modifier.height(70.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun AccountScreen(
+    email: String,
+    textScale: Float,
+    onTextScale: (Float) -> Unit,
+    onReset: () -> Unit,
+    onLogout: () -> Unit
+) {
+    Column(
+        Modifier.fillMaxSize().background(Ink).verticalScroll(rememberScrollState()).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Card(colors = CardDefaults.cardColors(containerColor = Panel), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .3f))) {
+            Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(52.dp).clip(CircleShape).background(Gold.copy(alpha = .16f)), contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Person, null, tint = GoldLight, modifier = Modifier.size(27.dp))
+                }
+                Spacer(Modifier.width(13.dp))
+                Column {
+                    Text("Ваш аккаунт BookCheef", color = GoldLight, fontWeight = FontWeight.SemiBold)
+                    Text(email.ifBlank { "Аккаунт BookCheef" }, color = Muted, fontSize = 12.sp)
+                }
+            }
+        }
+        Text("Настройки чтения", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        Card(colors = CardDefaults.cardColors(containerColor = Panel)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("Размер текста", color = Cream, fontWeight = FontWeight.Medium)
+                Text("${(textScale * 100).toInt()}%", color = GoldLight, fontSize = 13.sp)
+                Slider(value = textScale, onValueChange = onTextScale, valueRange = .85f..1.8f, colors = SliderDefaults.colors(thumbColor = Gold, activeTrackColor = Gold))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Меньше", color = Muted, fontSize = 11.sp)
+                    Text("Больше", color = Muted, fontSize = 11.sp)
+                }
+                TextButton(onClick = onReset) { Text("Сбросить размер", color = GoldLight) }
+            }
+        }
+        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth(), colors = ButtonDefaults.outlinedButtonColors(contentColor = GoldLight), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .5f))) {
+            Icon(Icons.Default.Logout, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Выйти из аккаунта")
+        }
+    }
+}
+
+@Composable
+private fun EmptyCatalog(title: String, subtitle: String) {
+    Box(Modifier.fillMaxSize().padding(30.dp), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Default.MenuBook, null, tint = Gold.copy(alpha = .75f), modifier = Modifier.size(52.dp))
+            Spacer(Modifier.height(12.dp))
+            Text(title, color = Cream, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(7.dp))
+            Text(subtitle, color = Muted, fontSize = 12.sp, lineHeight = 18.sp)
+        }
+    }
+}
+
+private suspend fun withFrameNanosCompat() {
+    kotlinx.coroutines.yield()
 }
