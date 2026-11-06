@@ -173,7 +173,8 @@ private fun BookCheefApp() {
             error = ""
             try {
                 readingText = api.readBook(book.id, book.isFree)
-                val progress = api.readingProgress(book.id)
+                // Progress sync is optional: an unapplied history migration must not block reading.
+                val progress = try { api.readingProgress(book.id) } catch (_: Exception) { JSONObject() }
                 withFrameNanosCompat()
                 withFrameNanosCompat()
                 readerScrollState.scrollTo(progress.optInt("scrollY", 0).coerceAtLeast(0))
