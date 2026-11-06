@@ -426,7 +426,7 @@ private fun AuthScreen(
     onSubmit: () -> Unit
 ) {
     Box(
-        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF292033), Ink, Color(0xFF0C0B11)))),
+        Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PanelLight, Ink, Panel))),
         contentAlignment = Alignment.Center
     ) {
         Column(
