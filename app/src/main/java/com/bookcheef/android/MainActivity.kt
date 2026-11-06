@@ -5,6 +5,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
@@ -21,6 +23,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.snapshotFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -45,6 +50,7 @@ private fun BookCheefApp() {
     var books by remember { mutableStateOf<List<BookItem>>(emptyList()) }
     var selected by remember { mutableStateOf<BookItem?>(null) }
     var readingText by remember { mutableStateOf("") }
+    val readerScrollState = rememberScrollState()
     var downloaded by remember { mutableStateOf(setOf<String>()) }
     var tab by remember { mutableStateOf("catalog") }
     val preferences = remember { context.getSharedPreferences("bookcheef_preferences", android.content.Context.MODE_PRIVATE) }
@@ -95,11 +101,28 @@ private fun BookCheefApp() {
             if (readingText.isBlank()) {
                 Text("Загружаю книгу…")
                 LaunchedEffect(selected!!.id) {
-                    try { readingText = api.readBook(selected!!.id) }
-                    catch (e: Exception) { readingText = "Не удалось открыть книгу: ${e.message}" }
+                    try {
+                        val bookId = selected!!.id
+                        readingText = api.readBook(bookId)
+                        val progress = api.readingProgress(bookId)
+                        readerScrollState.scrollTo(progress.optInt("scrollY", 0).coerceAtLeast(0))
+                    } catch (e: Exception) { readingText = "Не удалось открыть книгу: ${e.message}" }
                 }
             } else {
-                LazyColumn { item { Text(readingText, style = MaterialTheme.typography.bodyLarge.copy(fontSize = (16f * textScale).sp, lineHeight = (25f * textScale).sp)) } }
+                Column(Modifier.fillMaxSize().verticalScroll(readerScrollState)) {
+                    Text(readingText, style = MaterialTheme.typography.bodyLarge.copy(fontSize = (16f * textScale).sp, lineHeight = (25f * textScale).sp))
+                }
+            }
+            LaunchedEffect(selected!!.id) {
+                snapshotFlow { readerScrollState.value }
+                    .drop(1)
+                    .debounce(900)
+                    .collect { position ->
+                        if (readingText.isNotBlank()) {
+                            try { api.saveReadingProgress(selected!!.id, JSONObject().put("scrollY", position)) }
+                            catch (_: Exception) { /* Keep reading even if progress sync is temporarily unavailable. */ }
+                        }
+                    }
             }
         }
     } else {
