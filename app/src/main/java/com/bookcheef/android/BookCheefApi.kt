@@ -11,10 +11,15 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.ByteArrayInputStream
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 class BookCheefApi(context: Context) {
+    private val appContext = context.applicationContext
     private val prefs = context.getSharedPreferences("bookcheef_session", Context.MODE_PRIVATE)
     private val downloads = File(context.filesDir, "books").apply { mkdirs() }
     private val client = OkHttpClient.Builder()
@@ -177,88 +182,128 @@ class BookCheefApi(context: Context) {
         request("/rest/v1/user_reading_history?user_id=eq.$userId&book_id=eq.$bookId", "PATCH", payload.toString())
     }
 
-    suspend fun readBook(id: String, isFree: Boolean): BookReadResult = withContext(Dispatchers.IO) {
-        refreshIfNeeded()
-        val file = File(downloads, "$id.json")
-        if (isFree && file.exists()) {
-            val cached = try { JSONObject(file.readText()) } catch (_: Exception) { JSONObject() }
-            val cachedText = cached.optString("book_content")
-            if (cachedText.isNotBlank()) return@withContext BookReadResult(text = cachedText)
+    private fun requestBytes(path: String): ByteArray {
+        val token = prefs.getString("access", null)?.takeIf { it.isNotBlank() } ?: key
+        val request = Request.Builder().url("$base$path")
+            .header("apikey", key)
+            .header("Authorization", "Bearer $token")
+            .get().build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val message = response.body?.string().orEmpty()
+                throw IllegalStateException("Не удалось загрузить файл книги (HTTP " + response.code + "): " + message.take(220))
+            }
+            return response.body?.bytes() ?: ByteArray(0)
         }
+    }
 
-        // The RPC enforces the free/Pro entitlement before returning book metadata.
-        if (!isFree) file.delete()
+    private fun extractDocx(bytes: ByteArray): String {
+        val xml = java.util.zip.ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            var result = ""
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (entry.name == "word/document.xml") {
+                    result = zip.readBytes().toString(Charsets.UTF_8)
+                    break
+                }
+            }
+            result
+        }
+        if (xml.isBlank()) throw IllegalStateException("Не удалось прочитать содержимое DOCX-файла.")
+        return xml.replace(Regex("</w:p>"), "\n\n")
+            .replace(Regex("<w:tab[^>]*/>"), "\t")
+            .replace(Regex("<[^>]+>"), "")
+            .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&quot;", "\"").replace("&apos;", "'").trim()
+    }
+
+    private fun extractDocumentText(bytes: ByteArray, type: String): String {
+        return when (type) {
+            "txt", "md", "markdown" -> bytes.toString(Charsets.UTF_8)
+            "html", "htm" -> bytes.toString(Charsets.UTF_8)
+                .replace(Regex("(?is)<(script|style)[^>]*>.*?</\\1>"), "")
+                .replace(Regex("(?i)<br\\s*/?>|</p>|</div>|</h[1-6]>|</li>"), "\n")
+                .replace(Regex("<[^>]+>"), "")
+                .replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<")
+                .replace("&gt;", ">").replace("&quot;", "\"").replace("&#39;", "'").trim()
+            "rtf" -> bytes.toString(Charsets.UTF_8)
+                .replace(Regex("\\\\'[0-9a-fA-F]{2}"), " ")
+                .replace(Regex("\\\\[a-zA-Z]+-?\\d* ?"), "")
+                .replace(Regex("[{}]"), "").trim()
+            "docx" -> extractDocx(bytes)
+            "pdf" -> {
+                PDFBoxResourceLoader.init(appContext)
+                PDDocument.load(ByteArrayInputStream(bytes)).use { document ->
+                    PDFTextStripper().getText(document).trim()
+                }
+            }
+            else -> throw IllegalStateException("Формат .$type пока не поддерживается. Поддерживаются TXT, Markdown, HTML, RTF, DOCX и PDF.")
+        }
+    }
+
+    private suspend fun fetchBookText(id: String): String {
         val response = request(
             "/rest/v1/rpc/get_book_content",
             "POST",
             JSONObject().put("target_book_id", id).toString()
         )
-        val book = try { JSONObject(response) } catch (_: Exception) { null }
-        if (book == null) return@withContext BookReadResult(text = response)
-
-        val filePath = book.optString("book_file_path").takeUnless { it.isBlank() || it == "null" }
-        val fileType = book.optString("book_file_type").lowercase()
-        val fileName = book.optString("book_file_name")
-        if (filePath != null) {
-            val encodedPath = filePath.split("/").joinToString("/") { URLEncoder.encode(it, "UTF-8").replace("+", "%20") }
-            val signed = JSONObject(request(
-                "/storage/v1/object/sign/book-files/$encodedPath",
-                "POST",
-                JSONObject().put("expiresIn", 3600).toString()
-            ))
-            val signedPath = signed.optString("signedURL").ifBlank { signed.optString("signedUrl") }
-            if (signedPath.isBlank()) throw IllegalStateException("Supabase не вернул ссылку на файл книги.")
-            val signedUrl = if (signedPath.startsWith("http")) signedPath else "$base${if (signedPath.startsWith("/")) "" else "/"}$signedPath"
-            if (fileType in listOf("txt", "md", "markdown", "html", "htm", "rtf")) {
-                val request = Request.Builder().url(signedUrl).get().build()
-                client.newCall(request).execute().use { result ->
-                    if (!result.isSuccessful) throw IllegalStateException("Не удалось скачать файл книги (HTTP ${result.code}).")
-                    val raw = result.body?.string().orEmpty()
-                    val plain = if (fileType == "rtf") raw.replace(Regex("\\\\\\\\'[0-9a-f]{2}", RegexOption.IGNORE_CASE), "")
-                        .replace(Regex("\\\\\\\\[a-z]+-?\\\\d* ?", RegexOption.IGNORE_CASE), "")
-                        .replace(Regex("[{}]"), "") else raw
-                    if (isFree) file.writeText(JSONObject().put("book_content", plain).toString())
-                    return@withContext BookReadResult(text = plain, fileName = fileName, fileType = fileType)
-                }
-            }
-            return@withContext BookReadResult(
-                text = book.optString("book_content"),
-                externalUrl = signedUrl,
-                fileName = fileName,
-                fileType = fileType
-            )
+        val book = try { JSONObject(response) } catch (_: Exception) {
+            throw IllegalStateException("Сервер вернул некорректные данные книги.")
         }
-
         val content = book.optString("book_content")
-        val result = when {
-            content.isNotBlank() -> content
-            book.optJSONObject("interactive_content") != null -> {
-                val data = book.optJSONObject("interactive_content")!!
-                val nodes = data.optJSONArray("nodes") ?: JSONArray()
-                buildString {
-                    for (i in 0 until nodes.length()) {
-                        val node = nodes.optJSONObject(i) ?: continue
-                        val heading = node.optString("title").ifBlank { node.optString("id") }
-                        if (heading.isNotBlank()) append(heading).append("\\n\\n")
-                        append(node.optString("text")).append("\\n\\n")
-                        val choices = node.optJSONArray("choices") ?: JSONArray()
-                        for (j in 0 until choices.length()) append("• ").append(choices.optJSONObject(j)?.optString("label").orEmpty()).append("\\n")
-                        append("\\n")
-                    }
-                }.trim()
-            }
-            else -> "Для этой книги пока не добавлен текст."
+        if (content.isNotBlank()) return content
+
+        val interactive = book.optJSONObject("interactive_content")
+        if (interactive != null) {
+            val nodes = interactive.optJSONArray("nodes") ?: JSONArray()
+            return buildString {
+                for (i in 0 until nodes.length()) {
+                    val node = nodes.optJSONObject(i) ?: continue
+                    val heading = node.optString("title").ifBlank { node.optString("id") }
+                    if (heading.isNotBlank()) append(heading).append("\n\n")
+                    append(node.optString("text")).append("\n\n")
+                    val choices = node.optJSONArray("choices") ?: JSONArray()
+                    for (j in 0 until choices.length()) append("• ").append(choices.optJSONObject(j)?.optString("label").orEmpty()).append("\n")
+                    append("\n")
+                }
+            }.trim()
         }
-        if (isFree) file.writeText(JSONObject().put("book_content", result).toString())
-        BookReadResult(text = result, fileName = fileName, fileType = fileType)
+
+        val filePath = book.optString("book_file_path")
+        if (filePath.isBlank() || filePath == "null") {
+            throw IllegalStateException("У этой книги нет текста и не прикреплён файл. Проверьте книгу в панели администратора сайта.")
+        }
+        val encodedPath = filePath.split('/').joinToString("/") {
+            URLEncoder.encode(it, "UTF-8").replace("+", "%20")
+        }
+        val bytes = requestBytes("/storage/v1/object/authenticated/book-files/$encodedPath")
+        val type = book.optString("book_file_type").lowercase().ifBlank {
+            book.optString("book_file_name").substringAfterLast('.', "").lowercase()
+        }
+        val text = extractDocumentText(bytes, type)
+        if (text.isBlank()) throw IllegalStateException("Файл получен, но в нём не найден текст. Возможно, PDF является сканом без распознаваемого текста.")
+        return text
+    }
+
+    suspend fun readBook(id: String, isFree: Boolean): String = withContext(Dispatchers.IO) {
+        refreshIfNeeded()
+        val file = File(downloads, "$id.json")
+        if (isFree && file.exists()) {
+            val cached = pretty(file.readText())
+            if (cached.isNotBlank() && !cached.startsWith("{")) return@withContext cached
+        }
+        // Paid books are never served from a local cache; the RPC checks entitlement each time.
+        if (!isFree) file.delete()
+        val text = fetchBookText(id)
+        if (isFree) file.writeText(JSONObject().put("book_content", text).toString())
+        text
     }
 
     suspend fun downloadBook(id: String, isFree: Boolean) = withContext(Dispatchers.IO) {
         require(isFree) { "Офлайн-загрузка доступна только для бесплатных книг." }
         refreshIfNeeded()
-        val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
-        val book = JSONObject(result)
-        File(downloads, "$id.json").writeText(book.toString())
+        val text = fetchBookText(id)
+        File(downloads, "$id.json").writeText(JSONObject().put("book_content", text).toString())
     }
 
     fun downloadedIds(): Set<String> =
