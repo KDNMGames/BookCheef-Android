@@ -32,6 +32,7 @@ class BookCheefApi(context: Context) {
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
     fun hasSession() = prefs.getString("access", null) != null
+    fun hasCompletedLogin() = prefs.getBoolean("login_completed", false)
     fun currentEmail() = prefs.getString("email", "") ?: ""
     fun currentUserId() = prefs.getString("user_id", "") ?: ""
 
@@ -104,6 +105,7 @@ class BookCheefApi(context: Context) {
             .putString("refresh", result.optString("refresh_token"))
             .putString("email", user?.optString("email")?.takeIf { !it.isNullOrBlank() } ?: email)
             .putString("user_id", user?.optString("id")?.takeIf { !it.isNullOrBlank() } ?: result.optString("id"))
+            .putBoolean("login_completed", true)
             .apply()
     }
 
@@ -113,13 +115,17 @@ class BookCheefApi(context: Context) {
     }
 
     suspend fun catalog(): List<BookItem> = withContext(Dispatchers.IO) {
-        refreshIfNeeded()
-        // Use the same public catalog view as the website. Keep the request explicit so
-        // PostgREST only returns columns needed by the Android gallery.
-        val raw = request(
-            "/rest/v1/book_catalog?select=*&order=created_at.desc",
-            auth = true
-        )
+        // A previously signed-in reader may open the app without a network connection.
+        // Prefer a fresh catalog, but keep the last successful public catalog locally.
+        val raw = try {
+            refreshIfNeeded()
+            request("/rest/v1/book_catalog?select=*&order=created_at.desc", auth = true).also {
+                prefs.edit().putString("catalog_cache", it).apply()
+            }
+        } catch (networkOrSessionError: Exception) {
+            prefs.getString("catalog_cache", null)
+                ?: throw IllegalStateException("Не удалось загрузить каталог. Подключитесь к интернету хотя бы один раз, чтобы сохранить библиотеку на устройстве.", networkOrSessionError)
+        }
         val arr = try { JSONArray(raw) } catch (e: Exception) {
             throw IllegalStateException("Supabase вернул каталог в неожиданном формате: ${raw.take(220)}", e)
         }
@@ -286,8 +292,8 @@ class BookCheefApi(context: Context) {
     }
 
     suspend fun readBook(id: String, isFree: Boolean): BookReadResult = withContext(Dispatchers.IO) {
-        refreshIfNeeded()
         val file = File(downloads, "$id.json")
+        // Offline downloads are self-contained and must open before any token refresh.
         if (isFree && file.exists()) {
             try {
                 val cached = JSONObject(file.readText())
@@ -304,6 +310,7 @@ class BookCheefApi(context: Context) {
             } catch (_: Exception) { file.delete() }
         }
         if (!isFree) file.delete()
+        refreshIfNeeded()
         val result = fetchBookResult(id)
         if (isFree) file.writeText(JSONObject()
             .put("text", result.text)
