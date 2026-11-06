@@ -2,13 +2,34 @@
 
 Native Android application for the BookCheef platform.
 
-## Stack
-- Kotlin
-- Jetpack Compose
-- Supabase Auth and REST API
+## Current foundation
 
-## Status
-Project foundation is being built. The app will share accounts and book data with the BookCheef website and support offline reading.
+- Kotlin + Jetpack Compose + Material 3
+- Email/password registration and sign-in through the same Supabase project as the website
+- Catalog loading from the public `book_catalog` view
+- Book content retrieval through the `get_book_content(target_book_id)` RPC
+- Downloaded book JSON stored in the app's private files for offline reading
+- GitHub Actions workflow builds a debug APK artifact
 
-## Configuration
-Set `SUPABASE_URL` and the public Supabase publishable/anon key in local Gradle properties. Never put a Supabase service-role key in the Android app or repository.
+## Supabase configuration
+
+Create `local.properties` in the repository root (do not commit it):
+
+```properties
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co
+SUPABASE_ANON_KEY=YOUR_PUBLIC_PUBLISHABLE_OR_ANON_KEY
+```
+
+Use the same Supabase project and public anon/publishable key as the BookCheef website. Never use a service-role or secret key in a mobile app.
+
+For GitHub Actions, add repository Actions secrets named `SUPABASE_URL` and `SUPABASE_ANON_KEY`. The APK build can run without them, but the app cannot connect to Supabase until configured.
+
+## Build
+
+Open the project in Android Studio (JDK 17, Android SDK 35), sync Gradle, then run the `app` configuration.
+
+The GitHub Actions workflow `.github/workflows/build-android.yml` uploads `BookCheef-debug` as a build artifact after each push to `main`.
+
+## Important
+
+This is the initial application foundation, not yet a feature-for-feature replacement of the website. Advanced reader formatting, interactive branches, collections, favorites, reading history, ratings, child mode, Pro access and promo-code flows still need to be implemented and tested. Offline downloads currently cache the protected book-content response as JSON.
