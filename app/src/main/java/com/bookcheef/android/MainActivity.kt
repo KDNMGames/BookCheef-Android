@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -46,6 +47,8 @@ private fun BookCheefApp() {
     var readingText by remember { mutableStateOf("") }
     var downloaded by remember { mutableStateOf(setOf<String>()) }
     var tab by remember { mutableStateOf("catalog") }
+    val preferences = remember { context.getSharedPreferences("bookcheef_preferences", android.content.Context.MODE_PRIVATE) }
+    var textScale by remember { mutableFloatStateOf(preferences.getFloat("text_scale", 1.0f).coerceIn(0.85f, 1.8f)) }
 
     fun loadCatalog() {
         scope.launch {
@@ -96,7 +99,7 @@ private fun BookCheefApp() {
                     catch (e: Exception) { readingText = "Не удалось открыть книгу: ${e.message}" }
                 }
             } else {
-                LazyColumn { item { Text(readingText, style = MaterialTheme.typography.bodyLarge) } }
+                LazyColumn { item { Text(readingText, style = MaterialTheme.typography.bodyLarge.copy(fontSize = (16f * textScale).sp, lineHeight = (25f * textScale).sp)) } }
             }
         }
     } else {
@@ -118,6 +121,11 @@ private fun BookCheefApp() {
             when (tab) {
                 "account" -> Column(Modifier.padding(padding).fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Ваш аккаунт BookCheef", style = MaterialTheme.typography.titleLarge)
+                    Text("Размер текста", style = MaterialTheme.typography.titleMedium)
+                    Text("Настройте размер для комфортного чтения: ${ (textScale * 100).toInt() }%")
+                    Slider(value = textScale, onValueChange = { textScale = it; preferences.edit().putFloat("text_scale", it).apply() }, valueRange = 0.85f..1.8f)
+                    Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) { Text("Меньше") ; Text("Больше") }
+                    TextButton(onClick = { textScale = 1f; preferences.edit().putFloat("text_scale", 1f).apply() }) { Text("Сбросить размер") }
                     Text("Вход выполнен: ${api.currentEmail().ifBlank { "аккаунт BookCheef" }}")
                     Text("Избранное, история чтения и оценки будут синхронизироваться с сайтом по мере подключения соответствующих разделов.")
                     OutlinedButton(onClick = { api.logout(); session = false }) { Text("Выйти") }
