@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Book
@@ -33,6 +34,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -99,7 +104,7 @@ private fun BookCheefApp() {
     var error by remember { mutableStateOf("") }
     var books by remember { mutableStateOf<List<BookItem>>(emptyList()) }
     var selected by remember { mutableStateOf<BookItem?>(null) }
-    var readingText by remember { mutableStateOf("") }
+    var readingData by remember { mutableStateOf(BookReadResult()) }
     val readerScrollState = rememberScrollState()
     var downloaded by remember { mutableStateOf(setOf<String>()) }
     var tab by remember { mutableStateOf("catalog") }
@@ -151,7 +156,7 @@ private fun BookCheefApp() {
     } else if (selected != null) {
         ReaderScreen(
             book = selected!!,
-            text = readingText,
+            data = readingData,
             loading = loadingReader,
             scrollState = readerScrollState,
             textScale = textScale,
@@ -160,7 +165,7 @@ private fun BookCheefApp() {
                 scope.launch {
                     try { api.saveReadingProgress(bookId, JSONObject().put("scrollY", readerScrollState.value)) } catch (_: Exception) {}
                     selected = null
-                    readingText = ""
+                    readingData = BookReadResult()
                     loadingReader = false
                 }
             }
@@ -171,25 +176,25 @@ private fun BookCheefApp() {
             loadingReader = true
             error = ""
             try {
-                readingText = api.readBook(book.id, book.isFree)
+                readingData = api.readBook(book.id, book.isFree)
                 // Progress sync is optional: an unapplied history migration must not block reading.
                 val progress = try { api.readingProgress(book.id) } catch (_: Exception) { JSONObject() }
                 withFrameNanosCompat()
                 withFrameNanosCompat()
                 readerScrollState.scrollTo(progress.optInt("scrollY", 0).coerceAtLeast(0))
             } catch (e: Exception) {
-                readingText = "Не удалось открыть книгу.\n\n${e.message ?: "Проверьте подключение и доступ к книге."}"
+                readingData = BookReadResult(text = "Не удалось открыть книгу.\n\n" + (e.message ?: "Проверьте подключение и доступ к книге."))
             } finally {
                 loadingReader = false
             }
         }
-        LaunchedEffect(selected?.id, readingText) {
+        LaunchedEffect(selected?.id, readingData.text) {
             snapshotFlow { readerScrollState.value }
                 .drop(1)
                 .debounce(900)
                 .collect { position ->
                     val bookId = selected?.id ?: return@collect
-                    if (readingText.isNotBlank()) {
+                    if (readingData.text.isNotBlank() || readingData.interactiveContent != null) {
                         try { api.saveReadingProgress(bookId, JSONObject().put("scrollY", position)) } catch (_: Exception) {}
                     }
                 }
@@ -515,37 +520,126 @@ private fun CoverPlaceholder(title: String) {
 @Composable
 private fun ReaderScreen(
     book: BookItem,
-    text: String,
+    data: BookReadResult,
     loading: Boolean,
     scrollState: androidx.compose.foundation.ScrollState,
     textScale: Float,
     onBack: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    var activeFootnote by remember(book.id) { mutableStateOf(-1) }
+    var activeNode by remember(book.id, data.interactiveContent) { mutableStateOf(data.interactiveContent?.optString("start").orEmpty()) }
+    val nodes = data.interactiveContent?.optJSONArray("nodes")
+    val scene = (0 until (nodes?.length() ?: 0)).mapNotNull { nodes?.optJSONObject(it) }.firstOrNull { it.optString("id") == activeNode }
+    val footnotes = (0 until data.footnotes.length()).mapNotNull { data.footnotes.optJSONObject(it) }
+    val questions = (0 until data.readerQuestions.length()).mapNotNull { data.readerQuestions.optJSONObject(it) }
+    val answers = remember(book.id) { mutableStateMapOf<Int, Boolean>() }
     Column(Modifier.fillMaxSize().background(Ink)) {
-        Row(
-            Modifier.fillMaxWidth().background(Panel).padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(Modifier.fillMaxWidth().background(Panel).padding(horizontal = 10.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Назад", tint = GoldLight) }
             Text(book.title, color = Cream, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, modifier = Modifier.weight(1f), overflow = TextOverflow.Ellipsis)
         }
         if (loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator(color = Gold)
-                    Spacer(Modifier.height(12.dp))
-                    Text("Открываем книгу…", color = Muted)
-                }
-            }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator(color = Gold); Spacer(Modifier.height(12.dp)); Text("Открываем книгу…", color = Muted) } }
         } else {
-            Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 22.dp, vertical = 22.dp)) {
+            Column(Modifier.fillMaxSize().verticalScroll(scrollState).padding(horizontal = 20.dp, vertical = 20.dp)) {
                 Text(book.title, color = GoldLight, fontSize = 25.sp, fontWeight = FontWeight.Bold, lineHeight = 31.sp)
                 if (book.author.isNotBlank()) Text(book.author, color = Muted, fontSize = 13.sp)
-                Spacer(Modifier.height(22.dp))
-                Text(text.ifBlank { "В этой книге пока нет текста." }, color = Cream, fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp)
-                Spacer(Modifier.height(70.dp))
+                Spacer(Modifier.height(20.dp))
+                if (scene != null) {
+                    Text("ВАШ ВЫБОР · " + scene.optString("title", scene.optString("id")), color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    ReaderIllustration(scene.optString("image_start"), scene.optString("image_start_alt"))
+                    ReaderTextBlocks(scene.optString("text"), footnotes, textScale, onFootnote = { activeFootnote = it })
+                    ReaderIllustration(scene.optString("image_end"), scene.optString("image_end_alt"))
+                    val choices = scene.optJSONArray("choices") ?: org.json.JSONArray()
+                    if (choices.length() > 0) {
+                        Spacer(Modifier.height(18.dp)); Text("Что будете делать?", color = GoldLight, fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                        for (i in 0 until choices.length()) {
+                            val choice = choices.optJSONObject(i) ?: continue
+                            val target = choice.optString("target")
+                            val buttonColor = runCatching { Color(android.graphics.Color.parseColor(choice.optString("buttonColor", "#563b78"))) }.getOrDefault(Plum)
+                            val textColor = runCatching { Color(android.graphics.Color.parseColor(choice.optString("textColor", "#ffffff"))) }.getOrDefault(Cream)
+                            Button(onClick = { if ((0 until (nodes?.length() ?: 0)).any { nodes?.optJSONObject(it)?.optString("id") == target }) { activeNode = target; scope.launch { scrollState.animateScrollTo(0) } } }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), colors = ButtonDefaults.buttonColors(containerColor = buttonColor, contentColor = textColor), shape = RoundedCornerShape(12.dp)) { Text(choice.optString("label", "Выбрать")) }
+                        }
+                    } else {
+                        Text("Конец этой истории", color = GoldLight, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 18.dp))
+                        OutlinedButton(onClick = { activeNode = data.interactiveContent?.optString("start").orEmpty(); scope.launch { scrollState.animateScrollTo(0) } }) { Text("Начать заново") }
+                    }
+                } else {
+                    ReaderTextBlocks(data.text.ifBlank { "В этой книге пока нет текста." }, footnotes, textScale, onFootnote = { activeFootnote = it })
+                }
+                if (activeFootnote in footnotes.indices) {
+                    val note = footnotes[activeFootnote]
+                    Card(Modifier.fillMaxWidth().padding(top = 14.dp), colors = CardDefaults.cardColors(containerColor = PanelLight), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .5f))) {
+                        Column(Modifier.padding(14.dp)) {
+                            Text("СНОСКА " + (activeFootnote + 1) + " · " + note.optString("word", note.optString("term")), color = GoldLight, fontWeight = FontWeight.Bold)
+                            Text(note.optString("text", note.optString("note")), color = Cream, modifier = Modifier.padding(top = 6.dp), fontSize = (14f * textScale).sp, lineHeight = (22f * textScale).sp)
+                            TextButton(onClick = { activeFootnote = -1 }) { Text("Закрыть", color = GoldLight) }
+                        }
+                    }
+                }
+                if (footnotes.isNotEmpty()) {
+                    Spacer(Modifier.height(26.dp)); Text(data.footnoteStyle.optString("title", "Сноски"), color = GoldLight, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    footnotes.forEachIndexed { index, note ->
+                        Column(Modifier.fillMaxWidth().padding(vertical = 7.dp).clip(RoundedCornerShape(10.dp)).background(Panel).clickable { activeFootnote = index }.padding(12.dp)) {
+                            Text((index + 1).toString() + ". " + note.optString("word", note.optString("term")), color = Gold, fontWeight = FontWeight.SemiBold)
+                            Text(note.optString("text", note.optString("note")), color = Cream, fontSize = 13.sp, lineHeight = 19.sp)
+                        }
+                    }
+                }
+                if (questions.isNotEmpty()) {
+                    Spacer(Modifier.height(26.dp)); Text("ПРОВЕРЬ СЕБЯ", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold); Text("Вопросы к читателю", color = GoldLight, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                    questions.forEachIndexed { index, q ->
+                        Card(Modifier.fillMaxWidth().padding(top = 10.dp), colors = CardDefaults.cardColors(containerColor = Panel)) {
+                            Column(Modifier.padding(14.dp)) {
+                                Text((index + 1).toString() + ". " + q.optString("question"), color = Cream, fontWeight = FontWeight.SemiBold)
+                                TextButton(onClick = { answers[index] = !(answers[index] ?: false) }) { Text(if (answers[index] == true) "Скрыть ответ" else "Показать ответ", color = GoldLight) }
+                                if (answers[index] == true) Text(q.optString("answer"), color = Muted, fontSize = 14.sp, lineHeight = 21.sp)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(60.dp))
             }
         }
+    }
+}
+
+@Composable
+private fun ReaderTextBlocks(content: String, footnotes: List<JSONObject>, textScale: Float, onFootnote: (Int) -> Unit) {
+    val imageRegex = Regex("^!\\[([^\\]]*)]\\((https?://[^\\s)]+)\\)$")
+    content.split(Regex("\\n\\s*\\n")).forEach { raw ->
+        val block = raw.trim()
+        if (block.isBlank()) return@forEach
+        val image = imageRegex.matchEntire(block)
+        if (image != null) ReaderIllustration(image.groupValues[2], image.groupValues[1])
+        else {
+            val heading = Regex("^(#{1,3})\\s+(.+)$").matchEntire(block)
+            if (heading != null) Text(heading.groupValues[2], color = GoldLight, fontSize = (if (heading.groupValues[1].length == 1) 23f else 19f).sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp, bottom = 8.dp))
+            else {
+                val annotated = buildAnnotatedString {
+                    var position = 0
+                    val terms = footnotes.mapIndexedNotNull { index, note -> val term = note.optString("word", note.optString("term")).trim(); if (term.isNotBlank()) index to term else null }.sortedByDescending { it.second.length }
+                    while (position < block.length) {
+                        val match = terms.mapNotNull { pair -> Regex("(?i)(?<![\\p{L}\\p{N}_])" + Regex.escape(pair.second) + "(?![\\p{L}\\p{N}_])").find(block, position)?.let { Triple(it.range.first, it.range.last + 1, pair.first) } }.minByOrNull { it.first }
+                        if (match == null) { append(block.substring(position)); break }
+                        if (match.first > position) append(block.substring(position, match.first))
+                        pushStringAnnotation("footnote", match.third.toString())
+                        withStyle(SpanStyle(color = GoldLight, textDecoration = TextDecoration.Underline)) { append(block.substring(match.first, match.second)) }
+                        pop(); position = match.second
+                    }
+                }
+                ClickableText(text = annotated, style = MaterialTheme.typography.bodyLarge.copy(color = Cream, fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp), modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp), onClick = { offset -> annotated.getStringAnnotations("footnote", offset, offset).firstOrNull()?.item?.toIntOrNull()?.let(onFootnote) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReaderIllustration(url: String?, alt: String?) {
+    val imageUrl = url?.trim().orEmpty()
+    if (imageUrl.startsWith("https://") || imageUrl.startsWith("http://")) {
+        SubcomposeAsyncImage(model = imageUrl, contentDescription = alt?.ifBlank { null } ?: "Иллюстрация книги", modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp).clip(RoundedCornerShape(14.dp)).heightIn(min = 120.dp, max = 420.dp), contentScale = ContentScale.Fit, loading = { Box(Modifier.fillMaxWidth().height(150.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Gold) } }, error = { Box(Modifier.fillMaxWidth().height(90.dp).background(Panel), contentAlignment = Alignment.Center) { Text("Не удалось загрузить иллюстрацию", color = Muted) } })
     }
 }
 
