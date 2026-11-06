@@ -114,7 +114,7 @@ private fun BookCheefApp() {
                 LaunchedEffect(selected!!.id) {
                     try {
                         val bookId = selected!!.id
-                        readingText = api.readBook(bookId)
+                        readingText = api.readBook(bookId, selected!!.isFree)
                         val progress = api.readingProgress(bookId)
                         withFrameNanos { }
                         withFrameNanos { }
@@ -185,12 +185,14 @@ private fun BookCheefApp() {
                                             if (book.description.isNotBlank()) Text(book.description, maxLines = 2, style = MaterialTheme.typography.bodySmall)
                                             Text(if (book.isFree) "Бесплатно" else "Доступ по условиям сайта", style = MaterialTheme.typography.labelSmall)
                                         }
-                                        IconButton(onClick = {
-                                            scope.launch {
-                                                try { api.downloadBook(book.id); downloaded = api.downloadedIds() }
-                                                catch (e: Exception) { error = e.message ?: "Не удалось сохранить книгу" }
-                                            }
-                                        }) { Icon(Icons.Default.Download, contentDescription = "Скачать для офлайн") }
+                                        if (book.isFree) {
+                                            IconButton(onClick = {
+                                                scope.launch {
+                                                    try { api.downloadBook(book.id, book.isFree); downloaded = api.downloadedIds() }
+                                                    catch (e: Exception) { error = e.message ?: "Не удалось сохранить книгу" }
+                                                }
+                                            }) { Icon(Icons.Default.Download, contentDescription = "Скачать бесплатную книгу для офлайн") }
+                                        }
                                     }
                                 }
                             }
