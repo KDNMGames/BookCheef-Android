@@ -125,6 +125,9 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
     var selectedGenre by remember { mutableStateOf("Все жанры") }
     var selectedAge by remember { mutableStateOf("Любой возраст") }
     var sortMode by remember { mutableStateOf("Рейтинг") }
+    var genreMenuExpanded by remember { mutableStateOf(false) }
+    var ageMenuExpanded by remember { mutableStateOf(false) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
     var storageBytes by remember { mutableLongStateOf(api.downloadedSizeBytes()) }
 
     fun loadCatalog() {
@@ -277,16 +280,12 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
                         "Сначала бесплатные" -> filteredBase.sortedByDescending { it.isFree }
                         else -> filteredBase
                     }
-                    val topBooks = books.take(5)
+                    val topBooks = books.sortedWith(compareByDescending<BookItem> { if (it.likes + it.dislikes > 0) it.likes.toDouble() / (it.likes + it.dislikes) else 0.0 }.thenByDescending { it.likes + it.dislikes }).take(5)
                     val genres = listOf("Все жанры") + books.map { it.genre }.filter { it.isNotBlank() }.distinct().sorted()
                     val ages = listOf("Любой возраст") + books.map { it.age }.filter { it.isNotBlank() }.distinct().sorted()
                     Column(Modifier.fillMaxSize().padding(padding)) {
                         if (tab == "catalog") {
-                            Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-                                Text("Истории, которые остаются с тобой", color = GoldLight, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(5.dp))
-                                Text("Открой для себя новые миры среди страниц любимых книг.", color = Muted, fontSize = 13.sp)
-                                Spacer(Modifier.height(15.dp))
+                            Column(Modifier.padding(horizontal = 18.dp, vertical = 10.dp)) {
                                 OutlinedTextField(
                                     value = search,
                                     onValueChange = { search = it },
@@ -317,14 +316,13 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
                                 }
                             }
                         }
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(if (tab == "downloads") "Сохранённые книги" else "Все книги", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.weight(1f))
-                            Text("${filtered.size}", color = Muted, fontSize = 12.sp)
-                            IconButton(onClick = { loadCatalog() }) { Icon(Icons.Default.Refresh, "Обновить", tint = Gold) }
+                        if (tab == "downloads") {
+                            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Сохранённые книги", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.weight(1f))
+                                Text("${filtered.size}", color = Muted, fontSize = 12.sp)
+                                IconButton(onClick = { loadCatalog() }) { Icon(Icons.Default.Refresh, "Обновить", tint = Gold) }
+                            }
                         }
                         if (busy && books.isEmpty()) {
                             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
@@ -344,6 +342,44 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
                                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
+                                if (tab == "catalog") {
+                                    item {
+                                        Column(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+                                            Text("Истории, которые остаются с тобой", color = GoldLight, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                                            Text("Открой для себя новые миры среди страниц любимых книг.", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 4.dp))
+                                            Spacer(Modifier.height(18.dp))
+                                            Text("Топ книг", color = GoldLight, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                                            Row(Modifier.fillMaxWidth().padding(top = 9.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                topBooks.forEachIndexed { index, book ->
+                                                    Card(Modifier.weight(1f).height(90.dp).clickable { readingData = BookReadResult(); selected = book }, colors = CardDefaults.cardColors(containerColor = Panel), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .25f))) {
+                                                        Column(Modifier.padding(7.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                                                            Text("#${index + 1}", color = Gold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                            Text(book.title, color = Cream, fontSize = 10.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                                            Text("★ ${book.likes} · ${book.dislikes}", color = Muted, fontSize = 9.sp)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Spacer(Modifier.height(15.dp))
+                                            Text("Категории и фильтры", color = GoldLight, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                                            Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.padding(top = 7.dp)) {
+                                                Box {
+                                                    OutlinedButton(onClick = { genreMenuExpanded = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) { Text(selectedGenre, fontSize = 10.sp) }
+                                                    DropdownMenu(expanded = genreMenuExpanded, onDismissRequest = { genreMenuExpanded = false }) { genres.forEach { value -> DropdownMenuItem(text = { Text(value) }, onClick = { selectedGenre = value; genreMenuExpanded = false }) } }
+                                                }
+                                                Box {
+                                                    OutlinedButton(onClick = { ageMenuExpanded = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) { Text(selectedAge, fontSize = 10.sp) }
+                                                    DropdownMenu(expanded = ageMenuExpanded, onDismissRequest = { ageMenuExpanded = false }) { ages.forEach { value -> DropdownMenuItem(text = { Text(value) }, onClick = { selectedAge = value; ageMenuExpanded = false }) } }
+                                                }
+                                                Box {
+                                                    OutlinedButton(onClick = { sortMenuExpanded = true }, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) { Text(sortMode, fontSize = 10.sp) }
+                                                    DropdownMenu(expanded = sortMenuExpanded, onDismissRequest = { sortMenuExpanded = false }) { listOf("Рейтинг", "Название", "Сначала бесплатные").forEach { value -> DropdownMenuItem(text = { Text(value) }, onClick = { sortMode = value; sortMenuExpanded = false }) } }
+                                                }
+                                            }
+                                            Text("${filtered.size} книг", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
+                                        }
+                                    }
+                                }
                                 items(filtered, key = { it.id }) { book ->
                                     BookCard(
                                         book = book,
