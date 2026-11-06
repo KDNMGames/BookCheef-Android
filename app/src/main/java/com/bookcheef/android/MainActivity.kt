@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
@@ -105,6 +106,8 @@ private fun BookCheefApp() {
                         val bookId = selected!!.id
                         readingText = api.readBook(bookId)
                         val progress = api.readingProgress(bookId)
+                        withFrameNanos { }
+                        withFrameNanos { }
                         readerScrollState.scrollTo(progress.optInt("scrollY", 0).coerceAtLeast(0))
                     } catch (e: Exception) { readingText = "Не удалось открыть книгу: ${e.message}" }
                 }
