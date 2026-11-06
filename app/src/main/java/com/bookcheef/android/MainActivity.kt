@@ -169,8 +169,6 @@ private fun BookCheefApp() {
         LaunchedEffect(selected?.id) {
             val book = selected ?: return@LaunchedEffect
             readingText = ""
-            readingFileUrl = null
-            readingFileName = ""
             loadingReader = true
             error = ""
             try {
