@@ -23,11 +23,12 @@ class BookCheefApi(context: Context) {
     fun hasSession() = prefs.getString("access", null) != null
     fun currentEmail() = prefs.getString("email", "") ?: ""
 
-    private fun request(path: String, method: String = "GET", body: String? = null, auth: Boolean = true): String {
+    private fun request(path: String, method: String = "GET", body: String? = null, auth: Boolean = true, prefer: String? = null): String {
         check(base.startsWith("https://") && key.isNotBlank()) { "Не настроен Supabase. Добавьте SUPABASE_URL и SUPABASE_ANON_KEY в local.properties." }
         val builder = Request.Builder().url("$base$path")
             .header("apikey", key)
             .header("Authorization", "Bearer ${if (auth) prefs.getString("access", key) ?: key else key}")
+        if (!prefer.isNullOrBlank()) builder.header("Prefer", prefer)
         when (method) {
             "POST" -> builder.post((body ?: "{}").toRequestBody(jsonType))
             "PATCH" -> builder.patch((body ?: "{}").toRequestBody(jsonType))
@@ -54,7 +55,7 @@ class BookCheefApi(context: Context) {
             throw IllegalStateException("Сервер не вернул токен. Проверьте подтверждение почты.")
         }
         prefs.edit().putString("access", access).putString("refresh", result.optString("refresh_token"))
-            .putString("email", email).apply()
+            .putString("email", email).putString("user_id", result.optJSONObject("user")?.optString("id")?.takeIf { !it.isNullOrBlank() } ?: result.optString("id")).apply()
     }
 
     fun logout() {
@@ -72,6 +73,29 @@ class BookCheefApi(context: Context) {
             BookItem(id, o.optString("title", "Без названия"), o.optString("description"),
                 o.optString("author"), o.optBoolean("is_free", false))
         }
+    }
+
+    fun currentUserId() = prefs.getString("user_id", "") ?: ""
+
+    suspend fun readingProgress(bookId: String): JSONObject = withContext(Dispatchers.IO) {
+        val userId = currentUserId()
+        if (userId.isBlank()) return@withContext JSONObject()
+        val raw = request("/rest/v1/user_reading_history?select=reading_progress&user_id=eq.$userId&book_id=eq.$bookId")
+        val rows = JSONArray(raw)
+        if (rows.length() == 0) JSONObject() else rows.optJSONObject(0)?.optJSONObject("reading_progress") ?: JSONObject()
+    }
+
+    suspend fun saveReadingProgress(bookId: String, progress: JSONObject) = withContext(Dispatchers.IO) {
+        val userId = currentUserId()
+        if (userId.isBlank()) return@withContext
+        val now = java.time.Instant.now().toString()
+        val payload = JSONObject()
+            .put("user_id", userId)
+            .put("book_id", bookId)
+            .put("last_opened_at", now)
+            .put("completed", false)
+            .put("reading_progress", progress.put("updatedAt", now))
+        request("/rest/v1/user_reading_history?on_conflict=user_id,book_id", "POST", payload.toString(), true, "resolution=merge-duplicates,return=minimal")
     }
 
     suspend fun readBook(id: String): String = withContext(Dispatchers.IO) {
