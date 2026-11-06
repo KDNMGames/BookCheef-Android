@@ -33,3 +33,10 @@ The GitHub Actions workflow `.github/workflows/build-android.yml` builds the APK
 ## Important
 
 This is the initial application foundation, not yet a feature-for-feature replacement of the website. Advanced reader formatting, interactive branches, collections, favorites, reading history, ratings, child mode, Pro access and promo-code flows still need to be implemented and tested. Offline downloads currently cache the protected book-content response as JSON.
+
+
+## Automatic user profile creation
+
+The shared Supabase database migration `202611060003_auto_user_profiles.sql` creates a minimal `public.user_profiles` row automatically after every successful Auth registration. The database trigger covers both website and Android registrations, so the Android client must not insert a second profile row. Email, password and account creation timestamp remain in Supabase Auth and are not duplicated in the public profile table.
+
+Apply the migration in the Supabase SQL Editor before relying on this feature. It also backfills a minimal profile row for existing Auth accounts.
