@@ -93,7 +93,6 @@ class BookCheefApi(context: Context) {
             .put("user_id", userId)
             .put("book_id", bookId)
             .put("last_opened_at", now)
-            .put("completed", false)
             .put("reading_progress", progress.put("updatedAt", now))
         request("/rest/v1/user_reading_history?on_conflict=user_id,book_id", "POST", payload.toString(), true, "resolution=merge-duplicates,return=minimal")
     }
