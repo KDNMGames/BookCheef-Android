@@ -1,6 +1,8 @@
 package com.bookcheef.android
 
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -38,7 +40,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.drop
@@ -100,6 +102,8 @@ private fun BookCheefApp() {
     var books by remember { mutableStateOf<List<BookItem>>(emptyList()) }
     var selected by remember { mutableStateOf<BookItem?>(null) }
     var readingText by remember { mutableStateOf("") }
+    var readingFileUrl by remember { mutableStateOf<String?>(null) }
+    var readingFileName by remember { mutableStateOf("") }
     val readerScrollState = rememberScrollState()
     var downloaded by remember { mutableStateOf(setOf<String>()) }
     var tab by remember { mutableStateOf("catalog") }
@@ -152,7 +156,10 @@ private fun BookCheefApp() {
         ReaderScreen(
             book = selected!!,
             text = readingText,
+            externalUrl = readingFileUrl,
+            fileName = readingFileName,
             loading = loadingReader,
+            onOpenFile = { url -> context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
             scrollState = readerScrollState,
             textScale = textScale,
             onBack = {
@@ -168,10 +175,15 @@ private fun BookCheefApp() {
         LaunchedEffect(selected?.id) {
             val book = selected ?: return@LaunchedEffect
             readingText = ""
+            readingFileUrl = null
+            readingFileName = ""
             loadingReader = true
             error = ""
             try {
-                readingText = api.readBook(book.id, book.isFree)
+                val result = api.readBook(book.id, book.isFree)
+                readingText = result.text
+                readingFileUrl = result.externalUrl
+                readingFileName = result.fileName
                 val progress = api.readingProgress(book.id)
                 withFrameNanosCompat()
                 withFrameNanosCompat()
@@ -510,7 +522,10 @@ private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, on
 private fun ReaderScreen(
     book: BookItem,
     text: String,
+    externalUrl: String?,
+    fileName: String,
     loading: Boolean,
+    onOpenFile: (String) -> Unit,
     scrollState: androidx.compose.foundation.ScrollState,
     textScale: Float,
     onBack: () -> Unit
