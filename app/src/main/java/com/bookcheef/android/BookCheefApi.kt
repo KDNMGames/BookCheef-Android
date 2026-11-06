@@ -1,6 +1,8 @@
 package com.bookcheef.android
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -41,7 +43,7 @@ class BookCheefApi(context: Context) {
         }
     }
 
-    suspend fun authenticate(email: String, password: String, register: Boolean) {
+    suspend fun authenticate(email: String, password: String, register: Boolean) = withContext(Dispatchers.IO) {
         require(email.contains("@")) { "Введите корректную электронную почту." }
         require(password.length >= 6) { "Пароль должен содержать не менее 6 символов." }
         val path = if (register) "/auth/v1/signup" else "/auth/v1/token?grant_type=password"
@@ -60,10 +62,10 @@ class BookCheefApi(context: Context) {
         prefs.edit().clear().apply()
     }
 
-    suspend fun catalog(): List<BookItem> {
+    suspend fun catalog(): List<BookItem> = withContext(Dispatchers.IO) {
         val raw = request("/rest/v1/book_catalog?select=*&order=created_at.desc")
         val arr = JSONArray(raw)
-        return (0 until arr.length()).mapNotNull { i ->
+        (0 until arr.length()).mapNotNull { i ->
             val o = arr.optJSONObject(i) ?: return@mapNotNull null
             val id = o.optString("id")
             if (id.isBlank() || id == "null") return@mapNotNull null
@@ -72,14 +74,15 @@ class BookCheefApi(context: Context) {
         }
     }
 
-    suspend fun readBook(id: String): String {
+    suspend fun readBook(id: String): String = withContext(Dispatchers.IO) {
         val file = File(downloads, "$id.json")
-        if (file.exists()) return pretty(file.readText())
-        val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
-        return pretty(result)
+        if (file.exists()) pretty(file.readText()) else {
+            val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
+            pretty(result)
+        }
     }
 
-    suspend fun downloadBook(id: String) {
+    suspend fun downloadBook(id: String) = withContext(Dispatchers.IO) {
         val result = request("/rest/v1/rpc/get_book_content", "POST", JSONObject().put("target_book_id", id).toString())
         File(downloads, "$id.json").writeText(result)
     }
