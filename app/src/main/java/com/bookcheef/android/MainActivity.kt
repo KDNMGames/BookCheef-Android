@@ -467,18 +467,21 @@ private fun BookCard(book: BookItem, downloaded: Boolean, onOpen: () -> Unit, on
                 Modifier.width(106.dp).height(148.dp).clip(RoundedCornerShape(10.dp))
                     .background(Brush.linearGradient(listOf(Plum, PanelLight)))
             ) {
-                if (!book.coverUrl.isNullOrBlank()) {
-                    AsyncImage(
-                        model = book.coverUrl,
-                        contentDescription = "Обложка: ${book.title}",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Column(Modifier.fillMaxSize().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                        Icon(Icons.Default.MenuBook, null, tint = Gold, modifier = Modifier.size(35.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text(book.title, color = Cream, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                SubcomposeAsyncImage(
+                    model = book.coverUrl,
+                    contentDescription = "Обложка: ${book.title}",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                ) {
+                    val state = painter.state
+                    if (state is coil.compose.AsyncImagePainter.State.Success) {
+                        SubcomposeAsyncImageContent()
+                    } else {
+                        Column(Modifier.fillMaxSize().padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                            Icon(Icons.Default.MenuBook, null, tint = Gold, modifier = Modifier.size(35.dp))
+                            Spacer(Modifier.height(8.dp))
+                            Text(book.title, color = Cream, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                        }
                     }
                 }
                 if (book.isInteractive) {
