@@ -123,6 +123,12 @@ class BookCheefApi(context: Context) {
         val arr = try { JSONArray(raw) } catch (e: Exception) {
             throw IllegalStateException("Supabase вернул каталог в неожиданном формате: ${raw.take(220)}", e)
         }
+        val ratingByBook = try {
+            val ratings = JSONArray(request("/rest/v1/rpc/get_book_rating_summary", "POST", "{}"))
+            (0 until ratings.length()).mapNotNull { i ->
+                ratings.optJSONObject(i)?.let { row -> row.optString("book_id") to (row.optInt("likes") to row.optInt("dislikes")) }
+            }.toMap()
+        } catch (_: Exception) { emptyMap() }
         (0 until arr.length()).mapNotNull { index ->
             val row = arr.optJSONObject(index) ?: return@mapNotNull null
             val id = row.optString("id").takeUnless { it.isBlank() || it == "null" } ?: return@mapNotNull null
@@ -138,7 +144,9 @@ class BookCheefApi(context: Context) {
                 age = row.optString("age"),
                 genre = row.optString("genre"),
                 series = row.optString("series"),
-                isInteractive = row.optBoolean("is_interactive", false)
+                isInteractive = row.optBoolean("is_interactive", false),
+                likes = ratingByBook[id]?.first ?: 0,
+                dislikes = ratingByBook[id]?.second ?: 0
             )
         }
     }
@@ -349,7 +357,9 @@ data class BookItem(
     val age: String = "",
     val genre: String = "",
     val series: String = "",
-    val isInteractive: Boolean = false
+    val isInteractive: Boolean = false,
+    val likes: Int = 0,
+    val dislikes: Int = 0
 )
 
 
