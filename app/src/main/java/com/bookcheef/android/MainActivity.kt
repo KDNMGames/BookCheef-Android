@@ -1,8 +1,6 @@
 package com.bookcheef.android
 
 import android.os.Bundle
-import android.content.Intent
-import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -102,8 +100,6 @@ private fun BookCheefApp() {
     var books by remember { mutableStateOf<List<BookItem>>(emptyList()) }
     var selected by remember { mutableStateOf<BookItem?>(null) }
     var readingText by remember { mutableStateOf("") }
-    var readingFileUrl by remember { mutableStateOf<String?>(null) }
-    var readingFileName by remember { mutableStateOf("") }
     val readerScrollState = rememberScrollState()
     var downloaded by remember { mutableStateOf(setOf<String>()) }
     var tab by remember { mutableStateOf("catalog") }
@@ -156,12 +152,6 @@ private fun BookCheefApp() {
         ReaderScreen(
             book = selected!!,
             text = readingText,
-            externalUrl = readingFileUrl,
-            fileName = readingFileName,
-            onOpenFile = { url ->
-                try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                catch (e: Exception) { error = "Не удалось открыть файл: ${e.message}" }
-            },
             loading = loadingReader,
             scrollState = readerScrollState,
             textScale = textScale,
@@ -178,15 +168,10 @@ private fun BookCheefApp() {
         LaunchedEffect(selected?.id) {
             val book = selected ?: return@LaunchedEffect
             readingText = ""
-            readingFileUrl = null
-            readingFileName = ""
             loadingReader = true
             error = ""
             try {
-                val result = api.readBook(book.id, book.isFree)
-                readingText = result.text
-                readingFileUrl = result.externalUrl
-                readingFileName = result.fileName
+                readingText = api.readBook(book.id, book.isFree)
                 // Progress sync is optional: an unapplied history migration must not block reading.
                 val progress = try { api.readingProgress(book.id) } catch (_: Exception) { JSONObject() }
                 withFrameNanosCompat()
@@ -531,9 +516,6 @@ private fun CoverPlaceholder(title: String) {
 private fun ReaderScreen(
     book: BookItem,
     text: String,
-    externalUrl: String?,
-    fileName: String,
-    onOpenFile: (String) -> Unit,
     loading: Boolean,
     scrollState: androidx.compose.foundation.ScrollState,
     textScale: Float,
@@ -560,20 +542,7 @@ private fun ReaderScreen(
                 Text(book.title, color = GoldLight, fontSize = 25.sp, fontWeight = FontWeight.Bold, lineHeight = 31.sp)
                 if (book.author.isNotBlank()) Text(book.author, color = Muted, fontSize = 13.sp)
                 Spacer(Modifier.height(22.dp))
-                if (!externalUrl.isNullOrBlank()) {
-                    Card(colors = CardDefaults.cardColors(containerColor = PanelLight), border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .4f))) {
-                        Column(Modifier.fillMaxWidth().padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.MenuBook, null, tint = GoldLight, modifier = Modifier.size(38.dp))
-                            Spacer(Modifier.height(10.dp))
-                            Text(fileName.ifBlank { "Файл книги" }, color = Cream, fontWeight = FontWeight.SemiBold)
-                            Text("Документ защищён и будет открыт по временной ссылке.", color = Muted, fontSize = 11.sp)
-                            Spacer(Modifier.height(12.dp))
-                            Button(onClick = { onOpenFile(externalUrl) }, colors = ButtonDefaults.buttonColors(containerColor = Gold, contentColor = Ink)) { Text("Открыть книгу") }
-                        }
-                    }
-                } else {
-                    Text(text.ifBlank { "В этой книге пока нет текста." }, color = Cream, fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp)
-                }
+                Text(text.ifBlank { "В этой книге пока нет текста." }, color = Cream, fontSize = (17f * textScale).sp, lineHeight = (28f * textScale).sp)
                 Spacer(Modifier.height(70.dp))
             }
         }
