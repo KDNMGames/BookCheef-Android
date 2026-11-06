@@ -114,6 +114,7 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
     var loadingReader by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     var books by remember { mutableStateOf<List<BookItem>>(emptyList()) }
+    var collections by remember { mutableStateOf<List<BookCollection>>(emptyList()) }
     var selected by remember { mutableStateOf<BookItem?>(null) }
     var readingData by remember { mutableStateOf(BookReadResult()) }
     val readerScrollState = rememberScrollState()
@@ -136,6 +137,7 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
             error = ""
             try {
                 books = api.catalog()
+                collections = api.catalogCollections()
                 downloaded = api.downloadedIds()
             } catch (e: Exception) {
                 error = e.message ?: "Не удалось загрузить каталог"
@@ -363,6 +365,16 @@ private fun BookCheefApp(themeMode: String, onThemeMode: (String) -> Unit) {
                                             books.filter { it.genre.isNotBlank() }.groupBy { it.genre }.toSortedMap().forEach { (genreName, genreBooks) ->
                                                 BookRail("Жанр: $genreName", genreBooks) { book -> readingData = BookReadResult(); selected = book }
                                             }
+                                            books.filter { it.author.isNotBlank() }.groupBy { it.author }.toSortedMap().forEach { (authorName, authorBooks) ->
+                                                BookRail("Автор: $authorName", authorBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            }
+                                            books.filter { it.age.isNotBlank() }.groupBy { it.age }.toSortedMap().forEach { (ageName, ageBooks) ->
+                                                BookRail("Возраст: $ageName", ageBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            }
+                                            collections.forEach { collection ->
+                                                val collectionBooks = books.filter { collection.bookIds.contains(it.id) }
+                                                CollectionBookRail(collection, collectionBooks) { book -> readingData = BookReadResult(); selected = book }
+                                            }
                                             Spacer(Modifier.height(15.dp))
                                             Text("Категории и фильтры", color = GoldLight, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                                             Row(horizontalArrangement = Arrangement.spacedBy(7.dp), modifier = Modifier.padding(top = 7.dp)) {
@@ -565,6 +577,64 @@ private fun BookRail(title: String, books: List<BookItem>, onOpen: (BookItem) ->
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun CollectionBookRail(collection: BookCollection, books: List<BookItem>, onOpen: (BookItem) -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(width = 54.dp, height = 68.dp).clip(RoundedCornerShape(8.dp)).background(PanelLight)) {
+                SubcomposeAsyncImage(
+                    model = collection.coverUrl,
+                    contentDescription = "Обложка подборки: ${collection.name}",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    loading = { CoverPlaceholder(collection.name) },
+                    error = { CoverPlaceholder(collection.name) }
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(collection.name, color = GoldLight, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                if (collection.description.isNotBlank()) Text(collection.description, color = Muted, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("${books.size} книг", color = Muted, fontSize = 10.sp)
+            }
+        }
+        if (books.isNotEmpty()) {
+            androidx.compose.foundation.lazy.LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(books, key = { "collection-${collection.id}-${it.id}" }) { book ->
+                    CollectionBookTile(book, onOpen)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollectionBookTile(book: BookItem, onOpen: (BookItem) -> Unit) {
+    Card(
+        modifier = Modifier.width(116.dp).clickable { onOpen(book) },
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = Panel),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Gold.copy(alpha = .24f))
+    ) {
+        Column {
+            Box(Modifier.fillMaxWidth().height(148.dp).background(Brush.linearGradient(listOf(Plum, PanelLight)))) {
+                SubcomposeAsyncImage(
+                    model = book.coverUrl,
+                    contentDescription = "Обложка: ${book.title}",
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    loading = { CoverPlaceholder(book.title) },
+                    error = { CoverPlaceholder(book.title) }
+                )
+            }
+            Text(book.title, color = Cream, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, minLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
         }
     }
 }
